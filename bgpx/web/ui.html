@@ -1,0 +1,1311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bgpx — BGP Flowspec Receiver</title>
+<style>
+/* ── Reset & Base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg0:       #0d1117;
+  --bg1:       #161b22;
+  --bg2:       #21262d;
+  --bg3:       #2d333b;
+  --border:    #30363d;
+  --text:      #e6edf3;
+  --text2:     #8b949e;
+  --text3:     #484f58;
+  --accent:    #58a6ff;
+  --green:     #3fb950;
+  --yellow:    #d29922;
+  --red:       #f85149;
+  --orange:    #e3b341;
+  --purple:    #bc8cff;
+  --mono:      "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+}
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg0);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 20px;
+  height: 48px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.logo {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 2px;
+}
+.version { color: var(--text3); font-family: var(--mono); font-size: 11px; }
+.header-spacer { flex: 1; }
+
+.state-badge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  transition: all .3s;
+}
+.state-badge.established { border-color: var(--green); color: var(--green); }
+.state-badge.connecting  { border-color: var(--yellow); color: var(--yellow); }
+.state-badge.error       { border-color: var(--red); color: var(--red); }
+.dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text3);
+  flex-shrink: 0;
+  transition: background .3s;
+}
+.established .dot { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
+.connecting  .dot { background: var(--yellow); animation: pulse .8s infinite; }
+.error       .dot { background: var(--red); }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .4; }
+}
+
+.peer-label {
+  color: var(--text2);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.peer-label span { color: var(--text); }
+
+/* SSE health dot */
+.sse-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--text3);
+  flex-shrink: 0;
+  transition: background .3s;
+  title: "SSE stream";
+}
+.sse-dot.live { background: var(--green); }
+.sse-dot.reconnecting { background: var(--yellow); animation: pulse .8s infinite; }
+
+/* ── Layout ── */
+.body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Sidebar ── */
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--bg1);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  transition: width .2s, min-width .2s;
+}
+.sidebar.collapsed { width: 0; min-width: 0; overflow: hidden; }
+
+.sidebar-section {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-section h3 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text2);
+  margin-bottom: 12px;
+}
+
+/* ── Form ── */
+.field { margin-bottom: 10px; }
+.field label {
+  display: block;
+  font-size: 11px;
+  color: var(--text2);
+  margin-bottom: 3px;
+}
+.field input {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg0);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+  transition: border-color .2s;
+}
+.field input:focus  { border-color: var(--accent); }
+.field input:disabled { opacity: .5; cursor: not-allowed; }
+.field input.invalid { border-color: var(--red); }
+
+/* ── Buttons ── */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s;
+  margin-bottom: 6px;
+}
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-start {
+  background: var(--green);
+  color: #000;
+  border-color: var(--green);
+}
+.btn-start:hover:not(:disabled) { filter: brightness(1.1); }
+.btn-stop {
+  background: transparent;
+  color: var(--red);
+  border-color: var(--red);
+}
+.btn-stop:hover:not(:disabled) { background: rgba(248,81,73,.12); }
+
+/* ── Stats ── */
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  color: var(--text2);
+  font-size: 12px;
+}
+.stat-val {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.stat-val.nonzero { color: var(--accent); }
+
+/* ── Peer info ── */
+.peer-info-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.peer-info-grid .k { color: var(--text2); white-space: nowrap; }
+.peer-info-grid .v { color: var(--text); word-break: break-all; }
+
+/* ── Main panel ── */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg0);
+}
+
+/* ── Tab bar ── */
+.tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 8px 0 4px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  height: 40px;
+}
+.sidebar-toggle {
+  background: none;
+  border: none;
+  color: var(--text3);
+  font-size: 14px;
+  padding: 0 8px;
+  cursor: pointer;
+  line-height: 40px;
+  transition: color .15s;
+}
+.sidebar-toggle:hover { color: var(--text2); }
+.tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+  height: 100%;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all .15s;
+  margin-bottom: -1px;
+}
+.tab-btn:hover  { color: var(--text); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-count {
+  background: var(--bg3);
+  color: var(--text2);
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 10px;
+  min-width: 18px;
+  text-align: center;
+}
+.tab-btn.active .tab-count { background: rgba(88,166,255,.15); color: var(--accent); }
+
+.tab-spacer { flex: 1; }
+.icon-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text2);
+  font-size: 11px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all .15s;
+  margin-left: 6px;
+}
+.icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+.icon-btn.capturing {
+  border-color: #f97316;
+  color: #f97316;
+  animation: pulse .8s infinite;
+}
+.badge-capture { background: rgba(249,115,22,.15); color: #f97316; }
+.badge-packet  { background: rgba(34,211,238,.12); color: #22d3ee; }
+
+/* ── Tab content ── */
+.tab-content { display: none; flex: 1; overflow: hidden; }
+.tab-content.active { display: flex; flex-direction: column; }
+
+/* ── Filter bar ── */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.filter-chip {
+  padding: 2px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text2);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s;
+  font-family: var(--mono);
+}
+.filter-chip:hover { border-color: var(--text2); color: var(--text); }
+.filter-chip.active { background: rgba(88,166,255,.12); border-color: var(--accent); color: var(--accent); }
+.filter-label { font-size: 11px; color: var(--text3); margin-right: 2px; }
+
+/* ── Routes table ── */
+.routes-wrap { flex: 1; overflow: auto; }
+.routes-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.routes-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg1);
+  color: var(--text2);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.routes-table th:hover { color: var(--text); }
+.sort-arrow { margin-left: 4px; color: var(--text3); }
+.routes-table td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.routes-table tr:hover td { background: var(--bg1); }
+.routes-table .empty td {
+  text-align: center;
+  color: var(--text3);
+  padding: 40px;
+  font-style: italic;
+}
+/* Row flash on update */
+@keyframes rowFlash {
+  0%   { background: rgba(210,153,34,.18); }
+  100% { background: transparent; }
+}
+.row-flash td { animation: rowFlash .8s ease-out; }
+
+.id-cell {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text2);
+  white-space: nowrap;
+}
+.afi-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+}
+.afi-badge.ipv4 { background: rgba(88,166,255,.15); color: var(--accent); }
+.afi-badge.ipv6 { background: rgba(188,140,255,.15); color: var(--purple); }
+
+.match-cell { font-family: var(--mono); font-size: 11px; }
+.match-inner { overflow: hidden; max-height: 4.8em; position: relative; }
+.match-inner.expanded { max-height: none; }
+.match-item { display: block; line-height: 1.8; }
+.match-key  { color: var(--text2); }
+.match-val  { color: var(--text); }
+.match-more {
+  font-size: 10px;
+  color: var(--accent);
+  cursor: pointer;
+  margin-top: 2px;
+  display: inline-block;
+}
+
+.action-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  margin: 2px 2px 2px 0;
+  white-space: nowrap;
+}
+.action-discard     { background: rgba(248,81,73,.15);  color: var(--red);    }
+.action-rate-limit  { background: rgba(227,179,65,.15); color: var(--orange); }
+.action-redirect    { background: rgba(63,185,80,.15);  color: var(--green);  }
+.action-mark        { background: rgba(188,140,255,.15);color: var(--purple); }
+.action-unknown-ec  { background: rgba(210,153,34,.2);  color: var(--yellow); border: 1px solid rgba(210,153,34,.4); }
+.action-other       { background: var(--bg3);           color: var(--text2);  }
+
+.ts-cell {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text3);
+  white-space: nowrap;
+}
+.ts-cell[title] { cursor: default; border-bottom: 1px dotted var(--text3); }
+
+/* Expandable row detail */
+.route-detail-row { display: none; }
+.route-detail-row.open { display: table-row; }
+.route-detail-cell {
+  background: var(--bg1) !important;
+  padding: 10px 14px 10px 40px !important;
+}
+.route-detail-inner {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text2);
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.7;
+}
+
+/* ── Log panel ── */
+.log-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.log-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 16px;
+  line-height: 1.6;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  transition: background .1s;
+}
+.log-entry:hover { background: var(--bg1); }
+.log-entry.expanded { background: var(--bg1); border-left-color: var(--accent); }
+.log-entry.hidden { display: none; }
+
+.log-ts {
+  color: var(--text3);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.log-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+.badge-session  { background: rgba(63,185,80,.15);  color: var(--green);  }
+.badge-announce { background: rgba(88,166,255,.15); color: var(--accent); }
+.badge-withdraw { background: rgba(227,179,65,.15); color: var(--orange); }
+.badge-error    { background: rgba(248,81,73,.15);  color: var(--red);    }
+.badge-warning  { background: rgba(210,153,34,.15); color: var(--yellow); }
+
+.log-msg { color: var(--text); flex: 1; word-break: break-all; }
+.log-detail {
+  display: none;
+  margin: 4px 0 4px 120px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  color: var(--text2);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.7;
+  position: relative;
+}
+.log-entry.expanded + .log-detail { display: block; }
+.copy-btn {
+  position: absolute;
+  top: 6px; right: 8px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text3);
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.log-empty {
+  padding: 40px;
+  text-align: center;
+  color: var(--text3);
+  font-style: italic;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border); }
+
+/* ── Notification toast ── */
+.toast-wrap {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1000;
+}
+.toast {
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  color: var(--text);
+  font-size: 12px;
+  max-width: 280px;
+  animation: slideIn .2s ease;
+}
+.toast.error { border-color: var(--red); }
+.toast.ok    { border-color: var(--green); }
+@keyframes slideIn {
+  from { transform: translateX(20px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header class="header">
+  <span class="logo">bgpx</span>
+  <span class="version">v0.1.0</span>
+  <div class="header-spacer"></div>
+  <div id="sse-dot" class="sse-dot reconnecting" title="SSE stream: connecting…"></div>
+  <div class="state-badge" id="state-badge">
+    <span class="dot"></span>
+    <span id="state-label">IDLE</span>
+  </div>
+  <span class="peer-label" id="peer-label"></span>
+</header>
+
+<!-- ── Body ── -->
+<div class="body">
+
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar" id="sidebar">
+
+    <div class="sidebar-section">
+      <h3>BGP Configuration</h3>
+
+      <div class="field">
+        <label>Local ASN</label>
+        <input id="f-local-as" type="number" placeholder="65001" min="1" max="4294967295">
+      </div>
+      <div class="field">
+        <label>Router ID</label>
+        <input id="f-router-id" type="text" placeholder="192.0.2.2">
+      </div>
+      <div class="field">
+        <label>Peer IP</label>
+        <input id="f-peer-ip" type="text" placeholder="192.0.2.1">
+      </div>
+      <div class="field">
+        <label>Peer ASN</label>
+        <input id="f-peer-as" type="number" placeholder="65000" min="1" max="4294967295">
+      </div>
+      <div class="field">
+        <label>Hold Time (s)</label>
+        <input id="f-hold-time" type="number" value="90" min="3" max="65535">
+      </div>
+      <div class="field">
+        <label>Reconnect Delay (s)</label>
+        <input id="f-reconnect" type="number" value="5" min="0">
+      </div>
+      <div class="field">
+        <label>Connect Timeout (s)</label>
+        <input id="f-connect-timeout" type="number" value="5" min="1" step="0.5">
+      </div>
+      <div class="field">
+        <label>Active Retry (s)</label>
+        <input id="f-active-retry" type="number" value="1" min="0.1" step="0.1">
+      </div>
+      <div class="field">
+        <label>JSON Output File (optional)</label>
+        <input id="f-json-output" type="text" placeholder="/tmp/routes.json">
+      </div>
+      <div class="field">
+        <label>Listen Port
+          <span style="font-size:10px;color:var(--text3);font-weight:normal">
+            (auto: active + passive)
+          </span>
+        </label>
+        <input id="f-listen-port" type="number" value="179" min="1" max="65535">
+        <div style="font-size:11px;color:var(--text2);margin-top:4px;line-height:1.5">
+          bgpx connects out <em>and</em> listens simultaneously.<br>
+          Port 179 needs root or
+          <code style="color:var(--accent)">setcap cap_net_bind_service+ep</code>
+        </div>
+      </div>
+
+      <button class="btn btn-start" id="start-btn" onclick="startSession()">
+        ▶ Start Session
+      </button>
+      <button class="btn btn-stop" id="stop-btn" onclick="stopSession()" disabled>
+        ■ Stop Session
+      </button>
+    </div>
+
+    <div class="sidebar-section">
+      <h3>RIB Summary</h3>
+      <div class="stat-row">
+        <span>Total routes</span>
+        <span class="stat-val" id="s-total">0</span>
+      </div>
+      <div class="stat-row">
+        <span>IPv4 flowspec</span>
+        <span class="stat-val" id="s-ipv4">0</span>
+      </div>
+      <div class="stat-row">
+        <span>IPv6 flowspec</span>
+        <span class="stat-val" id="s-ipv6">0</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section" id="peer-info-section" style="display:none">
+      <h3>Negotiated Session</h3>
+      <div class="peer-info-grid" id="peer-info-grid"></div>
+    </div>
+
+  </aside>
+
+  <!-- ── Main panel ── -->
+  <main class="main">
+
+    <!-- Tab bar -->
+    <div class="tab-bar">
+      <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">‹</button>
+      <button class="tab-btn active" id="tab-routes-btn" onclick="switchTab('routes')">
+        Routes <span class="tab-count" id="routes-count">0</span>
+      </button>
+      <button class="tab-btn" id="tab-log-btn" onclick="switchTab('log')">
+        Live Log <span class="tab-count" id="log-count">0</span>
+      </button>
+      <div class="tab-spacer"></div>
+      <button class="icon-btn" id="capture-btn" onclick="toggleCapture()">◉ Capture</button>
+      <button class="icon-btn" id="export-btn" onclick="exportRoutes()" title="Download RIB as JSON">⬇ Export</button>
+      <button class="icon-btn" id="clear-btn" onclick="clearLog()" style="display:none">Clear log</button>
+    </div>
+
+    <!-- Routes tab -->
+    <div class="tab-content active" id="tab-routes">
+      <div class="routes-wrap">
+        <table class="routes-table" id="routes-table">
+          <thead>
+            <tr>
+              <th data-col="id">ID <span class="sort-arrow"></span></th>
+              <th data-col="afi">AFI <span class="sort-arrow"></span></th>
+              <th data-col="peer">Peer <span class="sort-arrow"></span></th>
+              <th>Match Criteria</th>
+              <th>Actions</th>
+              <th data-col="received_at">Received <span class="sort-arrow"></span></th>
+            </tr>
+          </thead>
+          <tbody id="routes-tbody">
+            <tr class="empty"><td colspan="6">No routes — configure and start a session</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Log tab -->
+    <div class="tab-content" id="tab-log">
+      <div class="filter-bar">
+        <span class="filter-label">Filter:</span>
+        <button class="filter-chip active" data-filter="all"     onclick="setLogFilter('all')">ALL</button>
+        <button class="filter-chip"        data-filter="session" onclick="setLogFilter('session')">SESSION</button>
+        <button class="filter-chip"        data-filter="announce"onclick="setLogFilter('announce')">ANNOUNCE</button>
+        <button class="filter-chip"        data-filter="withdraw"onclick="setLogFilter('withdraw')">WITHDRAW</button>
+        <button class="filter-chip"        data-filter="error"   onclick="setLogFilter('error')">ERROR</button>
+        <button class="filter-chip"        data-filter="capture" onclick="setLogFilter('capture')">PCAP</button>
+      </div>
+      <div class="log-wrap" id="log-wrap">
+        <div class="log-empty" id="log-empty">Connecting to event stream…</div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Toast container -->
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const routeMap = new Map();       // route_id → route object
+let sessionRunning  = false;
+let logCount        = 0;
+let autoScroll      = true;
+let logFilter       = 'all';
+let evtSource       = null;
+let sidebarOpen     = true;
+
+// Sort state for routes table
+let sortCol = 'received_at';
+let sortAsc = false;
+
+// ── Init ───────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  connectSSE();
+  restoreForm();
+
+  document.getElementById('log-wrap').addEventListener('scroll', e => {
+    const el = e.target;
+    autoScroll = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  });
+
+  // Sortable column headers
+  document.querySelectorAll('.routes-table th[data-col]').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (sortCol === col) sortAsc = !sortAsc;
+      else { sortCol = col; sortAsc = true; }
+      updateSortArrows();
+      renderRoutes();
+    });
+  });
+});
+
+// ── Sidebar toggle ─────────────────────────────────────────────────────────
+function toggleSidebar() {
+  sidebarOpen = !sidebarOpen;
+  document.getElementById('sidebar').classList.toggle('collapsed', !sidebarOpen);
+  document.getElementById('sidebar-toggle').textContent = sidebarOpen ? '‹' : '›';
+}
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + name + '-btn').classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  document.getElementById('clear-btn').style.display = name === 'log' ? '' : 'none';
+}
+
+// ── SSE ────────────────────────────────────────────────────────────────────
+function connectSSE() {
+  if (evtSource) evtSource.close();
+  setSseDot('reconnecting');
+  evtSource = new EventSource('/events');
+
+  evtSource.onopen = () => setSseDot('live');
+
+  evtSource.onmessage = e => {
+    try {
+      const event = JSON.parse(e.data);
+
+      if (event.type === 'snapshot') {
+        handleSnapshot(event);
+        return;
+      }
+
+      // Log tab: always append (replayed events fill history)
+      appendLogEntry(event);
+
+      // State updates only from live (non-replayed) events
+      if (!event.replayed) handleLiveEvent(event);
+    } catch (_) {}
+  };
+
+  evtSource.onerror = () => {
+    setSseDot('reconnecting');
+    evtSource.close();
+    setTimeout(connectSSE, 3000);
+  };
+}
+
+function setSseDot(state) {
+  const dot = document.getElementById('sse-dot');
+  dot.className = 'sse-dot ' + state;
+  dot.title = state === 'live' ? 'SSE stream: live' : 'SSE stream: reconnecting…';
+}
+
+// ── Snapshot (initial state on SSE connect) ────────────────────────────────
+function handleSnapshot(event) {
+  const s = event.status || {};
+
+  // Rebuild routeMap from snapshot
+  routeMap.clear();
+  (event.routes || []).forEach(r => routeMap.set(r.id, r));
+
+  // Update session state
+  sessionRunning = s.running || false;
+  updateStateBadge(s.state || 'IDLE');
+  updatePeerLabel(s);
+  updatePeerInfo(s.peer_info || {});
+  updateFormState();
+  renderRoutes();
+  updateRibStats();
+}
+
+// ── Live event handler ─────────────────────────────────────────────────────
+function handleLiveEvent(event) {
+  if (event.type === 'announce' && event.route_id) {
+    const existing = routeMap.has(event.route_id);
+    const route = {
+      id:             event.route_id,
+      afi:            event.afi,
+      peer:           event.peer,
+      received_at:    event.ts,
+      match:          event.match   || {},
+      actions:        event.actions || [],
+      path_attributes:event.path_attributes,
+    };
+    routeMap.set(event.route_id, route);
+    renderRoutes(existing ? event.route_id : null);
+    updateRibStats();
+  }
+
+  else if (event.type === 'withdraw' && event.route_id) {
+    routeMap.delete(event.route_id);
+    renderRoutes();
+    updateRibStats();
+  }
+
+  else if (event.type === 'session') {
+    if (event.state !== undefined) {
+      updateStateBadge(event.state);
+      if (event.state === 'IDLE') {
+        routeMap.clear();
+        renderRoutes();
+        updateRibStats();
+        sessionRunning = false;
+        updateFormState();
+      }
+    }
+    if (event.running !== undefined) {
+      sessionRunning = event.running;
+      updatePeerLabel(event);
+      updateFormState();
+      if (!event.running) {
+        routeMap.clear();
+        renderRoutes();
+        updateRibStats();
+        updatePeerInfo({});
+      }
+    }
+    if (event.peer_info) {
+      updatePeerInfo(event.peer_info);
+    }
+  }
+}
+
+// ── State badge ────────────────────────────────────────────────────────────
+function updateStateBadge(state) {
+  const badge = document.getElementById('state-badge');
+  const label = document.getElementById('state-label');
+  badge.className = 'state-badge';
+  label.textContent = state || 'IDLE';
+  if (state === 'ESTABLISHED')
+    badge.classList.add('established');
+  else if (['CONNECT','OPEN_SENT','OPEN_CONFIRMED'].includes(state))
+    badge.classList.add('connecting');
+  else if (state === 'ERROR')
+    badge.classList.add('error');
+}
+
+function updatePeerLabel(data) {
+  const el = document.getElementById('peer-label');
+  if (data && data.peer_ip) {
+    el.innerHTML = `<span>${escHtml(String(data.peer_ip))}</span> AS <span>${escHtml(String(data.peer_as || ''))}</span>`;
+  } else if (!sessionRunning) {
+    el.textContent = '';
+  }
+}
+
+function updatePeerInfo(info) {
+  const section = document.getElementById('peer-info-section');
+  const grid    = document.getElementById('peer-info-grid');
+  if (!info || !Object.keys(info).length) {
+    section.style.display = 'none';
+    return;
+  }
+  const labels = { version:'Version', peer_as:'Peer AS', hold_time:'Hold time', router_id:'Router ID' };
+  grid.innerHTML = Object.entries(info).map(([k, v]) =>
+    `<span class="k">${escHtml(labels[k] || k)}</span><span class="v">${escHtml(String(v))}</span>`
+  ).join('');
+  section.style.display = '';
+}
+
+function updateFormState() {
+  setFormDisabled(sessionRunning);
+  document.getElementById('start-btn').disabled = sessionRunning;
+  document.getElementById('stop-btn').disabled  = !sessionRunning;
+}
+
+// ── RIB stats ──────────────────────────────────────────────────────────────
+function updateRibStats() {
+  let ipv4 = 0, ipv6 = 0;
+  routeMap.forEach(r => {
+    if (r.afi === 'ipv4-flowspec') ipv4++;
+    else if (r.afi === 'ipv6-flowspec') ipv6++;
+  });
+  setStat('s-total', routeMap.size);
+  setStat('s-ipv4', ipv4);
+  setStat('s-ipv6', ipv6);
+  document.getElementById('routes-count').textContent = routeMap.size;
+}
+
+function setStat(id, val) {
+  const el = document.getElementById(id);
+  el.textContent = val;
+  el.className = 'stat-val' + (val > 0 ? ' nonzero' : '');
+}
+
+// ── Routes table ───────────────────────────────────────────────────────────
+function renderRoutes(flashId) {
+  const tbody  = document.getElementById('routes-tbody');
+  const routes = [...routeMap.values()];
+
+  if (!routes.length) {
+    tbody.innerHTML = '<tr class="empty"><td colspan="6">No routes in RIB</td></tr>';
+    return;
+  }
+
+  routes.sort((a, b) => {
+    let va = a[sortCol] ?? '', vb = b[sortCol] ?? '';
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return sortAsc ? -1 : 1;
+    if (va > vb) return sortAsc ?  1 : -1;
+    return 0;
+  });
+
+  tbody.innerHTML = routes.flatMap(r => [
+    `<tr data-id="${escHtml(r.id)}" class="${r.id === flashId ? 'row-flash' : ''}" onclick="toggleRouteDetail('${escHtml(r.id)}')">
+      <td class="id-cell">${escHtml(r.id)}</td>
+      <td>${afiBadge(r.afi)}</td>
+      <td class="id-cell">${escHtml(r.peer || '')}</td>
+      <td class="match-cell">${renderMatch(r.match)}</td>
+      <td>${renderActions(r.actions || [])}</td>
+      <td class="ts-cell" title="${escHtml(r.received_at || '')}">${relTime(r.received_at)}</td>
+    </tr>`,
+    `<tr class="route-detail-row" id="detail-${escHtml(r.id)}">
+      <td class="route-detail-cell" colspan="6">
+        <div class="route-detail-inner">${escHtml(JSON.stringify({ match: r.match, actions: r.actions, path_attributes: r.path_attributes }, null, 2))}</div>
+      </td>
+    </tr>`,
+  ]).join('');
+}
+
+function toggleRouteDetail(id) {
+  const row = document.getElementById('detail-' + id);
+  if (row) row.classList.toggle('open');
+}
+
+function updateSortArrows() {
+  document.querySelectorAll('.routes-table th[data-col]').forEach(th => {
+    const arrow = th.querySelector('.sort-arrow');
+    if (th.dataset.col === sortCol)
+      arrow.textContent = sortAsc ? ' ▲' : ' ▼';
+    else
+      arrow.textContent = '';
+  });
+}
+
+function afiBadge(afi) {
+  const cls = afi && afi.includes('ipv6') ? 'ipv6' : 'ipv4';
+  const lbl = afi && afi.includes('ipv6') ? 'IPv6' : 'IPv4';
+  return `<span class="afi-badge ${cls}">${lbl}</span>`;
+}
+
+function renderMatch(match) {
+  const items = Object.entries(match || {}).map(([k, v]) => {
+    const val = Array.isArray(v) ? v.join(' ') : v;
+    return `<span class="match-item"><span class="match-key">${escHtml(k)}:</span> <span class="match-val">${escHtml(String(val))}</span></span>`;
+  });
+  if (!items.length) return '<span style="color:var(--text3)">—</span>';
+  const LIMIT = 3;
+  if (items.length <= LIMIT) return `<div class="match-inner">${items.join('')}</div>`;
+  return `<div class="match-inner" id="mi-${Math.random().toString(36).slice(2)}">${items.slice(0, LIMIT).join('')}</div>
+          <span class="match-more" onclick="event.stopPropagation();this.previousElementSibling.classList.toggle('expanded');this.textContent=this.textContent.includes('+')?\`− less\`:\`+${items.length - LIMIT} more\`">+${items.length - LIMIT} more</span>`;
+}
+
+function renderActions(actions) {
+  return actions.map(a => {
+    let cls = 'action-other';
+    if (a === 'discard' || a === 'discard-packets') cls = 'action-discard';
+    else if (a.startsWith('rate-limit'))            cls = 'action-rate-limit';
+    else if (a.startsWith('redirect') || a.startsWith('rt-redirect') || a.startsWith('copy-to')) cls = 'action-redirect';
+    else if (a.startsWith('mark'))                  cls = 'action-mark';
+    else if (a.startsWith('unknown-flowspec'))       cls = 'action-unknown-ec';
+    return `<span class="action-badge ${cls}" title="${escHtml(a)}">${escHtml(a)}</span>`;
+  }).join('') || '<span style="color:var(--text3)">—</span>';
+}
+
+function exportRoutes() {
+  const data = JSON.stringify({ count: routeMap.size, routes: [...routeMap.values()] }, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'bgpx-routes.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Live Log ───────────────────────────────────────────────────────────────
+function setLogFilter(f) {
+  logFilter = f;
+  document.querySelectorAll('.filter-chip').forEach(c =>
+    c.classList.toggle('active', c.dataset.filter === f)
+  );
+  document.querySelectorAll('#log-wrap .log-entry').forEach(el => {
+    el.classList.toggle('hidden', !matchesFilter(el.dataset.type, el.dataset.level));
+  });
+}
+
+function matchesFilter(type, level) {
+  if (logFilter === 'all') return true;
+  if (logFilter === 'error') return type === 'error' || level === 'warning';
+  if (logFilter === 'capture') return type === 'capture';
+  return type === logFilter;
+}
+
+function appendLogEntry(event) {
+  const wrap  = document.getElementById('log-wrap');
+  const empty = document.getElementById('log-empty');
+  if (empty) empty.style.display = 'none';
+
+  const entry = document.createElement('div');
+  entry.className = 'log-entry' + (matchesFilter(event.type, event.level) ? '' : ' hidden');
+  entry.dataset.type  = event.type  || '';
+  entry.dataset.level = event.level || '';
+  entry.innerHTML = `
+    <span class="log-ts">${relTime(event.ts)}</span>
+    ${logBadge(event)}
+    <span class="log-msg">${logMsg(event)}</span>`;
+
+  const detailData = {...event};
+  ['ts','message','type','level','replayed'].forEach(k => delete detailData[k]);
+  const detailJson = Object.keys(detailData).length
+    ? JSON.stringify(detailData, null, 2) : '(no extra data)';
+
+  const detail = document.createElement('div');
+  detail.className = 'log-detail';
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'copy-btn';
+  copyBtn.textContent = '⎘ copy';
+  copyBtn.addEventListener('click', e => { e.stopPropagation(); copyText(copyBtn, detailJson); });
+  const pre = document.createElement('span');
+  pre.textContent = detailJson;
+  detail.appendChild(copyBtn);
+  detail.appendChild(pre);
+
+  entry.addEventListener('click', () => {
+    entry.classList.toggle('expanded');
+  });
+
+  wrap.appendChild(entry);
+  wrap.appendChild(detail);
+
+  // Keep DOM bounded
+  const entries = wrap.querySelectorAll('.log-entry');
+  if (entries.length > 500) {
+    const excess = entries.length - 500;
+    for (let i = 0; i < excess; i++) {
+      const next = entries[i].nextSibling;
+      entries[i].remove();
+      if (next && next.classList.contains('log-detail')) next.remove();
+    }
+  }
+
+  logCount++;
+  document.getElementById('log-count').textContent = logCount;
+  if (autoScroll && !event.replayed) wrap.scrollTop = wrap.scrollHeight;
+}
+
+function logBadge(event) {
+  let cls = 'badge-session', lbl = (event.type || 'unknown').toUpperCase();
+  if (event.type === 'announce')      { cls = 'badge-announce'; lbl = 'ANNOUNCE'; }
+  else if (event.type === 'withdraw') { cls = 'badge-withdraw'; lbl = 'WITHDRAW'; }
+  else if (event.type === 'error')    { cls = 'badge-error';    lbl = 'ERROR'; }
+  else if (event.level === 'warning') { cls = 'badge-warning';  lbl = 'WARN'; }
+  else if (event.type === 'capture')  { cls = 'badge-capture';  lbl = 'PCAP'; }
+  else if (event.level === 'packet')  { cls = 'badge-packet';   lbl = 'PKT'; }
+  return `<span class="log-badge ${cls}">${lbl}</span>`;
+}
+
+function logMsg(event) {
+  let msg = escHtml(event.message || '');
+  if ((event.type === 'announce' || event.type === 'withdraw') && event.match) {
+    const parts = Object.entries(event.match)
+      .map(([k,v]) => `${k}=${Array.isArray(v) ? v.join(' ') : v}`);
+    if (event.actions && event.actions.length)
+      parts.push('→ ' + event.actions.join(', '));
+    msg += `  <span style="color:var(--text2)">${escHtml(parts.join('  '))}</span>`;
+  }
+  return msg;
+}
+
+// ── Session control ────────────────────────────────────────────────────────
+async function startSession() {
+  const config = collectConfig();
+  if (!config) return;
+  saveForm(config);
+  setFormDisabled(true);
+  document.getElementById('start-btn').disabled = true;
+
+  try {
+    const r = await fetch('/session/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    toast('Session starting…', 'ok');
+    sessionRunning = true;
+    updatePeerLabel({ peer_ip: config.peer_ip, peer_as: config.peer_as });
+    document.getElementById('stop-btn').disabled = false;
+  } catch (e) {
+    toast(String(e), 'error');
+    setFormDisabled(false);
+    document.getElementById('start-btn').disabled = false;
+  }
+}
+
+async function stopSession() {
+  document.getElementById('stop-btn').disabled = true;
+  try {
+    await fetch('/session/stop', { method: 'POST' });
+    toast('Session stopped', 'ok');
+    sessionRunning = false;
+    routeMap.clear();
+    renderRoutes();
+    updateRibStats();
+    updatePeerInfo({});
+    updateFormState();
+  } catch (e) {
+    toast(String(e), 'error');
+    document.getElementById('stop-btn').disabled = false;
+  }
+}
+
+function collectConfig() {
+  const fields = {
+    local_as:           document.getElementById('f-local-as').value.trim(),
+    router_id:          document.getElementById('f-router-id').value.trim(),
+    peer_ip:            document.getElementById('f-peer-ip').value.trim(),
+    peer_as:            document.getElementById('f-peer-as').value.trim(),
+    hold_time:          document.getElementById('f-hold-time').value.trim(),
+    reconnect_delay:    document.getElementById('f-reconnect').value.trim(),
+    connect_timeout:    document.getElementById('f-connect-timeout').value.trim(),
+    active_retry_delay: document.getElementById('f-active-retry').value.trim(),
+    json_output:        document.getElementById('f-json-output').value.trim(),
+    listen_port:        document.getElementById('f-listen-port').value.trim(),
+  };
+
+  let ok = true;
+  ['local-as','router-id','peer-ip','peer-as'].forEach(id => {
+    const el = document.getElementById('f-' + id);
+    if (!el.value.trim()) { el.classList.add('invalid'); ok = false; }
+    else el.classList.remove('invalid');
+  });
+  if (!ok) { toast('Please fill in all required fields', 'error'); return null; }
+  return fields;
+}
+
+function setFormDisabled(disabled) {
+  ['f-local-as','f-router-id','f-peer-ip','f-peer-as',
+   'f-hold-time','f-reconnect','f-connect-timeout','f-active-retry',
+   'f-json-output','f-listen-port'].forEach(id => {
+    document.getElementById(id).disabled = disabled;
+  });
+}
+
+// ── localStorage config persistence ───────────────────────────────────────
+const _FORM_KEYS = ['f-local-as','f-router-id','f-peer-ip','f-peer-as',
+                    'f-hold-time','f-reconnect','f-connect-timeout',
+                    'f-active-retry','f-json-output','f-listen-port'];
+
+function saveForm(config) {
+  try { localStorage.setItem('bgpx-config', JSON.stringify(config)); } catch (_) {}
+}
+
+function restoreForm() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('bgpx-config') || 'null');
+    if (!saved) return;
+    const map = {
+      'f-local-as': 'local_as', 'f-router-id': 'router_id',
+      'f-peer-ip':  'peer_ip',  'f-peer-as':   'peer_as',
+      'f-hold-time':'hold_time','f-reconnect':  'reconnect_delay',
+      'f-connect-timeout':'connect_timeout','f-active-retry':'active_retry_delay',
+      'f-json-output':'json_output','f-listen-port':'listen_port',
+    };
+    Object.entries(map).forEach(([elId, key]) => {
+      if (saved[key] != null) document.getElementById(elId).value = saved[key];
+    });
+  } catch (_) {}
+}
+
+// ── Packet capture ─────────────────────────────────────────────────────────
+let capturing = false;
+
+async function toggleCapture() {
+  const btn = document.getElementById('capture-btn');
+  try {
+    if (!capturing) {
+      const r    = await fetch('/capture/start', { method: 'POST' });
+      const data = await r.json();
+      if (!r.ok) { toast(data.error || 'Capture failed', 'error'); return; }
+      capturing = true;
+      btn.textContent = '◉ Stop Capture';
+      btn.classList.add('capturing');
+      switchTab('log');
+    } else {
+      await fetch('/capture/stop', { method: 'POST' });
+      capturing = false;
+      btn.textContent = '◉ Capture';
+      btn.classList.remove('capturing');
+    }
+  } catch (e) {
+    toast(String(e), 'error');
+  }
+}
+
+async function clearLog() {
+  await fetch('/log', { method: 'DELETE' });
+  document.getElementById('log-wrap').innerHTML =
+    '<div class="log-empty" id="log-empty">Log cleared</div>';
+  logCount = 0;
+  document.getElementById('log-count').textContent = 0;
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function relTime(iso) {
+  if (!iso) return '—';
+  const d   = new Date(iso);
+  const sec = Math.floor((Date.now() - d) / 1000);
+  if (sec <  60) return `${sec}s ago`;
+  if (sec < 3600) return `${Math.floor(sec/60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec/3600)}h ago`;
+  return d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function toast(msg, type='ok') {
+  const wrap = document.getElementById('toasts');
+  const el   = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+function copyText(btn, text) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓ copied';
+    setTimeout(() => btn.textContent = '⎘ copy', 1500);
+  });
+}
+</script>
+</body>
+</html>
