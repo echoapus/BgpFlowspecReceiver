@@ -755,6 +755,14 @@ body {
           </tbody>
         </table>
       </div>
+      <!-- ponytail: pagination controls -->
+      <div class="pagination-bar" id="pagination-bar" style="padding: 8px 16px; background: var(--bg1); border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
+        <span id="page-info" style="color: var(--text2); font-size: 12px;">No routes</span>
+        <div style="display: flex; gap: 6px;">
+          <button class="icon-btn" id="btn-prev-page" onclick="prevPage()" disabled style="margin: 0;">&lt; Prev</button>
+          <button class="icon-btn" id="btn-next-page" onclick="nextPage()" disabled style="margin: 0;">Next &gt;</button>
+        </div>
+      </div>
     </div>
 
     <!-- Log tab -->
@@ -818,6 +826,10 @@ let sidebarOpen     = true;
 // Sort state for routes table
 let sortCol = 'received_at';
 let sortAsc = false;
+
+// ponytail: pagination state
+let currentPage = 1;
+const pageSize = 50;
 
 // ── Init ───────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
@@ -906,6 +918,7 @@ function handleSnapshot(event) {
 
   // Rebuild routeMap from snapshot
   routeMap.clear();
+  currentPage = 1;
   (event.routes || []).forEach(r => routeMap.set(r.id, r));
 
   // Update session state
@@ -939,13 +952,13 @@ function handleLiveEvent(event) {
       path_attributes:event.path_attributes,
     };
     routeMap.set(event.route_id, route);
-    renderRoutes(existing ? event.route_id : null);
+    queueRender(existing ? event.route_id : null);
     updateRibStats();
   }
 
   else if (event.type === 'withdraw' && event.route_id) {
     routeMap.delete(event.route_id);
-    renderRoutes();
+    queueRender();
     updateRibStats();
   }
 
@@ -1058,12 +1071,30 @@ function setStat(id, val) {
 }
 
 // ── Routes table ───────────────────────────────────────────────────────────
+// ponytail: rendering throttling to prevent redraw storms during high-frequency BGP updates
+let renderPending = false;
+let pendingFlashId = null;
+
+function queueRender(flashId) {
+  if (flashId) pendingFlashId = flashId;
+  if (renderPending) return;
+  renderPending = true;
+  requestAnimationFrame(() => {
+    renderRoutes(pendingFlashId);
+    renderPending = false;
+    pendingFlashId = null;
+  });
+}
+
 function renderRoutes(flashId) {
   const tbody  = document.getElementById('routes-tbody');
   const routes = [...routeMap.values()];
 
   if (!routes.length) {
     tbody.innerHTML = '<tr class="empty"><td colspan="6">No routes in RIB</td></tr>';
+    document.getElementById('page-info').textContent = 'No routes';
+    document.getElementById('btn-prev-page').disabled = true;
+    document.getElementById('btn-next-page').disabled = true;
     return;
   }
 
@@ -1076,14 +1107,24 @@ function renderRoutes(flashId) {
     return 0;
   });
 
-  tbody.innerHTML = routes.flatMap(r => [
+  // ponytail: calculate pagination range
+  const totalRoutes = routes.length;
+  const totalPages = Math.ceil(totalRoutes / pageSize);
+  if (currentPage > totalPages) currentPage = totalPages || 1;
+  if (currentPage < 1) currentPage = 1;
+
+  const startIdx = (currentPage - 1) * pageSize;
+  const endIdx = Math.min(startIdx + pageSize, totalRoutes);
+  const pageRoutes = routes.slice(startIdx, endIdx);
+
+  tbody.innerHTML = pageRoutes.flatMap(r => [
     `<tr data-id="${escHtml(r.id)}" class="${r.id === flashId ? 'row-flash' : ''}" onclick="toggleRouteDetail('${escHtml(r.id)}')">
       <td class="id-cell">${escHtml(r.id)}</td>
       <td>${afiBadge(r.afi)}</td>
       <td class="id-cell">${escHtml(r.peer || '')}</td>
       <td class="match-cell">${renderMatch(r.match)}</td>
       <td>${renderActions(r.actions || [])}</td>
-      <td class="ts-cell" title="${escHtml(formatServerTime(r.received_at))}">${relTime(r.received_at)}</td>
+      <td class="ts-cell" title="${escHtml(formatServerTime(r.received_at))}">${absLocalTime(r.received_at)}</td>
     </tr>`,
     `<tr class="route-detail-row" id="detail-${escHtml(r.id)}">
       <td class="route-detail-cell" colspan="6">
@@ -1091,6 +1132,27 @@ function renderRoutes(flashId) {
       </td>
     </tr>`,
   ]).join('');
+
+  // ponytail: update pagination controls state
+  document.getElementById('page-info').textContent = `Showing ${totalRoutes ? startIdx + 1 : 0}-${endIdx} of ${totalRoutes}`;
+  document.getElementById('btn-prev-page').disabled = currentPage <= 1;
+  document.getElementById('btn-next-page').disabled = currentPage >= totalPages;
+}
+
+// ponytail: pagination navigation handlers
+function prevPage() {
+  if (currentPage > 1) {
+    currentPage--;
+    renderRoutes();
+  }
+}
+
+function nextPage() {
+  const totalPages = Math.ceil(routeMap.size / pageSize);
+  if (currentPage < totalPages) {
+    currentPage++;
+    renderRoutes();
+  }
 }
 
 function toggleRouteDetail(id) {
@@ -1187,7 +1249,7 @@ function appendLogEntry(event) {
   entry.dataset.type  = event.type  || '';
   entry.dataset.level = event.level || '';
   entry.innerHTML = `
-    <span class="log-ts">${relTime(event.ts)}</span>
+    <span class="log-ts">${absLocalTime(event.ts)}</span>
     ${logBadge(event)}
     <span class="log-msg">${logMsg(event)}</span>`;
 
@@ -1407,14 +1469,11 @@ async function clearLog() {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-function relTime(iso) {
+function absLocalTime(iso) {
   if (!iso) return '—';
-  const d   = new Date(iso);
-  const sec = Math.floor((Date.now() - d) / 1000);
-  if (sec <  60) return `${sec}s ago`;
-  if (sec < 3600) return `${Math.floor(sec/60)}m ago`;
-  if (sec < 86400) return `${Math.floor(sec/3600)}h ago`;
-  return formatServerTime(iso);
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 19).replace('T', ' ');
 }
 
 function formatServerTime(iso) {
