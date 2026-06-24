@@ -198,3 +198,10 @@ def test_legacy_redirect_to_ip_actions():
     # Test (0x08, 0x00) - legacy transitive redirect-to-ipv4
     ec2 = bytes([0x08, 0x00]) + ipaddress.IPv4Address("2.2.2.2").packed + b"\x00\x00"
     assert parse_ext_communities(ec2) == ["redirect-to-ipv4=2.2.2.2"]
+
+    # Test next-hop trigger format when IP is 0.0.0.0
+    ec3 = bytes([0x80, 0x0b]) + ipaddress.IPv4Address("0.0.0.0").packed + b"\x00\x00"
+    assert parse_ext_communities(ec3) == ["redirect-to-next-hop"]
+
+    ec4 = bytes([0x08, 0x00]) + ipaddress.IPv4Address("0.0.0.0").packed + b"\x00\x00"
+    assert parse_ext_communities(ec4) == ["redirect-to-next-hop"]

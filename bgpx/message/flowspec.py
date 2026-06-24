@@ -341,4 +341,6 @@ def parse_ipv6_ext_communities(data: bytes) -> list[str]:
 def _redirect_to_ip_action(family: str, addr: str, flags: int) -> str:
     verb = "copy-to" if flags & 0x0001 else "redirect-to"
     extra = "" if flags in (0, 1) else f"(flags=0x{flags:04x})"
+    if addr in ("0.0.0.0", "::"):
+        return f"{verb}-next-hop{extra}"
     return f"{verb}-{family}={addr}{extra}"

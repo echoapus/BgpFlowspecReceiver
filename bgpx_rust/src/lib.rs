@@ -842,6 +842,9 @@ fn redirect_to_ip_action(family: &str, addr: &str, flags: u16) -> String {
     } else {
         format!("(flags=0x{:04x})", flags)
     };
+    if addr == "0.0.0.0" || addr == "::" {
+        return format!("{}-next-hop{}", verb, extra);
+    }
     format!("{}-{}={}{}", verb, family, addr, extra)
 }
 
