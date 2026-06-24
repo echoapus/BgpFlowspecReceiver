@@ -315,7 +315,7 @@ fn decode_path_attribute(
 
     match decode_path_attribute_value(code, data) {
         Ok(val) => attr.value = Some(val),
-        Err(_) => attr.raw = Some(hex::encode(data)),
+        Err(_) => attr.raw = Some(hex_encode(data)),
     }
 
     attr
@@ -520,7 +520,7 @@ fn format_next_hop(data: &[u8]) -> String {
         ]);
         return format!("{},{}", ip1, ip2);
     }
-    hex::encode(data)
+    hex_encode(data)
 }
 
 // ── Flowspec NLRI Parser ───────────────────────────────────────────────────
@@ -799,9 +799,9 @@ fn parse_ext_communities(data: &[u8]) -> Vec<String> {
             actions.push(redirect_to_ip_action("ipv4", &ip.to_string(), flags));
         } else {
             if [0x80, 0x81, 0x82].contains(&t) {
-                actions.push(format!("unknown-flowspec-ec={}", hex::encode(chunk)));
+                actions.push(format!("unknown-flowspec-ec={}", hex_encode(chunk)));
             } else {
-                actions.push(format!("ec={}", hex::encode(chunk)));
+                actions.push(format!("ec={}", hex_encode(chunk)));
             }
         }
     }
@@ -824,9 +824,9 @@ fn parse_ipv6_ext_communities(data: &[u8]) -> Vec<String> {
             actions.push(format!("rt-redirect=[{}]:{}", ip, val));
         } else {
             if (0x000C..=0x0010).contains(&etype) {
-                actions.push(format!("unknown-flowspec-ipv6-ec={}", hex::encode(chunk)));
+                actions.push(format!("unknown-flowspec-ipv6-ec={}", hex_encode(chunk)));
             } else {
-                actions.push(format!("ipv6-ec={}", hex::encode(chunk)));
+                actions.push(format!("ipv6-ec={}", hex_encode(chunk)));
             }
         }
     }
@@ -849,12 +849,6 @@ fn read_f32(bytes: &[u8]) -> f32 {
     f32::from_be_bytes(buf)
 }
 
-mod hex {
-    pub fn encode(data: &[u8]) -> String {
-        let mut s = String::with_capacity(data.len() * 2);
-        for &b in data {
-            s.push_str(&format!("{:02x}", b));
-        }
-        s
-    }
+fn hex_encode(data: &[u8]) -> String {
+    data.iter().map(|b| format!("{:02x}", b)).collect()
 }
