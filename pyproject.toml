@@ -18,5 +18,8 @@ dev = ["pytest>=7"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.setuptools]
+packages = ["bgpx", "bgpx.web", "bgpx.message"]
+
 [tool.setuptools.package-data]
 bgpx = ["web/*.html"]
