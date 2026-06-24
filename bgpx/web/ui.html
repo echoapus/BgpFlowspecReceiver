@@ -415,7 +415,7 @@ body {
 .afi-badge.ipv6 { background: rgba(188,140,255,.15); color: var(--purple); }
 
 .match-cell { font-family: var(--mono); font-size: 11px; }
-.match-inner { overflow: hidden; max-height: 4.8em; position: relative; }
+.match-inner { overflow: hidden; max-height: 5.4em; position: relative; } /* ponytail: 3 items * 1.8 line-height */
 .match-inner.expanded { max-height: none; }
 .match-item { display: block; line-height: 1.8; }
 .match-key  { color: var(--text2); }
@@ -1121,8 +1121,9 @@ function renderMatch(match) {
   });
   if (!items.length) return '<span style="color:var(--text3)">—</span>';
   const LIMIT = 3;
-  if (items.length <= LIMIT) return `<div class="match-inner">${items.join('')}</div>`;
-  return `<div class="match-inner" id="mi-${Math.random().toString(36).slice(2)}">${items.slice(0, LIMIT).join('')}</div>
+  if (items.length <= LIMIT) return `<div class="match-inner" style="max-height: none;">${items.join('')}</div>`;
+  /* ponytail: render all items so they actually exist in DOM when expanded */
+  return `<div class="match-inner">${items.join('')}</div>
           <span class="match-more" onclick="event.stopPropagation();this.previousElementSibling.classList.toggle('expanded');this.textContent=this.textContent.includes('+')?\`− less\`:\`+${items.length - LIMIT} more\`">+${items.length - LIMIT} more</span>`;
 }
 
