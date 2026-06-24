@@ -198,8 +198,8 @@ WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
-  systemctl enable "${APP_NAME}.service"
-  echo "Installed systemd service: ${SERVICE_FILE}"
+  systemctl enable --now "${APP_NAME}.service"
+  echo "Installed and started systemd service: ${SERVICE_FILE}"
 fi
 
 echo
@@ -226,7 +226,6 @@ if [[ "${CREATE_SERVICE}" -eq 1 ]]; then
   echo "Systemd unit:      ${SERVICE_FILE}"
   echo
   echo "Next commands:"
-  echo "  sudo systemctl start ${APP_NAME}"
   echo "  sudo systemctl status ${APP_NAME}"
   echo "  sudo journalctl -u ${APP_NAME} -f"
 else
