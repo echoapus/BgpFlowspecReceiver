@@ -1,5 +1,8 @@
 """Parse incoming BGP messages (RFC 4271)."""
 
+import ctypes
+import json
+import os
 import socket
 import struct
 
@@ -16,6 +19,29 @@ from bgpx.constants import (
 from bgpx.message.flowspec import (
     parse_nlri_list, parse_ext_communities, parse_ipv6_ext_communities,
 )
+
+# ponytail: load Rust parser library if available, with transparent fallback
+_lib = None
+_lib_path = os.path.join(os.path.dirname(__file__), "libbgpx_rust.so")
+if os.path.exists(_lib_path):
+    try:
+        _lib = ctypes.CDLL(_lib_path)
+        _lib.parse_header_rust.argtypes = [
+            ctypes.c_void_p, ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint32)
+        ]
+        _lib.parse_header_rust.restype = ctypes.c_int32
+
+        _lib.parse_open_rust.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        _lib.parse_open_rust.restype = ctypes.c_void_p
+
+        _lib.parse_update_details_rust.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        _lib.parse_update_details_rust.restype = ctypes.c_void_p
+
+        _lib.free_string.argtypes = [ctypes.c_void_p]
+        _lib.free_string.restype = None
+    except Exception:
+        _lib = None
 
 
 PATH_ATTR_NAMES = {
@@ -54,6 +80,19 @@ AS_PATH_SEGMENT_NAMES = {
 
 def parse_header(data: bytes) -> tuple[int, int]:
     """Return (msg_type, body_length). Raise ValueError on invalid marker."""
+    if _lib is not None:
+        msg_type = ctypes.c_uint8(0)
+        body_length = ctypes.c_uint32(0)
+        res = _lib.parse_header_rust(data, len(data), ctypes.byref(msg_type), ctypes.byref(body_length))
+        if res == 0:
+            return int(msg_type.value), int(body_length.value)
+        elif res == -1:
+            raise ValueError("Header too short")
+        elif res == -2:
+            raise ValueError("Invalid BGP marker")
+        elif res == -3:
+            raise ValueError(f"BGP message length below minimum 19")
+
     if len(data) < BGP_HEADER_LEN:
         raise ValueError("Header too short")
     if data[:16] != BGP_MARKER:
@@ -66,6 +105,15 @@ def parse_header(data: bytes) -> tuple[int, int]:
 
 def parse_open(body: bytes) -> dict:
     """Parse a BGP OPEN message body and return a dict with peer info."""
+    if _lib is not None:
+        ptr = _lib.parse_open_rust(body, len(body))
+        if ptr:
+            try:
+                js_str = ctypes.string_at(ptr).decode("utf-8")
+                return json.loads(js_str)
+            finally:
+                _lib.free_string(ptr)
+
     version = body[0]
     peer_as = struct.unpack("!H", body[1:3])[0]
     hold_time = struct.unpack("!H", body[3:5])[0]
@@ -115,6 +163,15 @@ def parse_update(body: bytes) -> tuple[dict, dict, list]:
 
 def parse_update_details(body: bytes) -> dict:
     """Parse a BGP UPDATE and retain decoded/raw path-attribute metadata."""
+    if _lib is not None:
+        ptr = _lib.parse_update_details_rust(body, len(body))
+        if ptr:
+            try:
+                js_str = ctypes.string_at(ptr).decode("utf-8")
+                return json.loads(js_str)
+            finally:
+                _lib.free_string(ptr)
+
     offset = 0
 
     # Skip IPv4 unicast withdrawn routes (not flowspec)

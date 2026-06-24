@@ -8,6 +8,7 @@ WEB_PORT="${WEB_PORT:-}"
 CREATE_SERVICE=""
 SET_BIND_CAP=0
 SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
+USE_RUST=""
 
 usage() {
   cat <<'EOF'
@@ -21,6 +22,7 @@ Options:
   --web-port PORT           Web UI bind port (default prompt: 8080)
   --service                 Install and enable a systemd service
   --cap-net-bind-service    Allow the venv Python to bind privileged ports like 179
+  --rust                    Compile and use the Rust-optimized parser
   -h, --help                Show this help
 
 Environment:
@@ -83,6 +85,10 @@ while [[ $# -gt 0 ]]; do
       SET_BIND_CAP=1
       shift
       ;;
+    --rust)
+      USE_RUST=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -119,7 +125,46 @@ prompt_service() {
 prompt_web_port
 prompt_service
 
+prompt_rust() {
+  [[ -n "${USE_RUST}" ]] && return
+  if [[ -t 0 ]]; then
+    read -r -p "Use Rust-optimized parser? [y/N]: " ans
+    [[ "${ans}" =~ ^[Yy] ]] && USE_RUST=1 || USE_RUST=0
+  else
+    USE_RUST=0
+  fi
+}
+prompt_rust
+
 SRC_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ "${USE_RUST}" -eq 1 ]]; then
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "Rust (cargo) not found."
+    if [[ -t 0 ]]; then
+      read -r -p "Install Rust automatically via rustup? [Y/n]: " ans
+      if [[ ! "${ans}" =~ ^[Nn] ]]; then
+        echo "Installing Rust..."
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        if [[ -f "$HOME/.cargo/env" ]]; then
+          source "$HOME/.cargo/env"
+        elif [[ -f "/root/.cargo/env" ]]; then
+          source "/root/.cargo/env"
+        fi
+      else
+        echo "Rust is required to compile. Exiting." >&2
+        exit 1
+      fi
+    else
+      echo "Non-interactive shell and Rust not found. Exiting." >&2
+      exit 1
+    fi
+  fi
+
+  echo "Compiling Rust BGP parser extension..."
+  cargo build --release --manifest-path "${SRC_DIR}/bgpx_rust/Cargo.toml"
+fi
+
 VENV_DIR="${INSTALL_DIR}/venv"
 APP_DIR="${INSTALL_DIR}/app"
 BIN_LINK="/usr/local/bin/${APP_NAME}"
@@ -147,6 +192,13 @@ tar \
 "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 "${VENV_DIR}/bin/python" -m pip install --upgrade pip
 "${VENV_DIR}/bin/pip" install "${APP_DIR}"
+
+if [[ "${USE_RUST}" -eq 1 ]]; then
+  SITEPACKAGES=$("${VENV_DIR}/bin/python" -c "import sysconfig; print(sysconfig.get_path('purelib'))")
+  mkdir -p "${SITEPACKAGES}/bgpx/message"
+  cp "${SRC_DIR}/bgpx_rust/target/release/libbgpx_rust.so" "${SITEPACKAGES}/bgpx/message/libbgpx_rust.so"
+  echo "Installed Rust parser extension to ${SITEPACKAGES}/bgpx/message/libbgpx_rust.so"
+fi
 
 "${VENV_DIR}/bin/python" - <<'PY'
 from importlib import resources
@@ -212,6 +264,11 @@ echo "Virtualenv:        ${VENV_DIR}"
 echo "Executable:        ${VENV_DIR}/bin/bgpx"
 echo "Web UI bind:       0.0.0.0:${WEB_PORT}"
 echo "Web UI URL:        http://localhost:${WEB_PORT}"
+if [[ "${USE_RUST}" -eq 1 ]]; then
+  echo "Parser Engine:     Rust-optimized (libbgpx_rust.so)"
+else
+  echo "Parser Engine:     Pure Python"
+fi
 if [[ "${EUID}" -eq 0 ]]; then
   echo "Command link:      ${BIN_LINK}"
 else
