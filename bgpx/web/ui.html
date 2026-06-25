@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>bgpx — BGP Flowspec Receiver</title>
+<title>bgpx — BGP Unicast and FlowSpec Receiver</title>
 <style>
 /* ── Reset & Base ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -606,6 +606,55 @@ body {
 .btn-theme:hover {
   background: var(--bg3);
 }
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  padding: 16px;
+  overflow: auto;
+}
+.analytics-card {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+.analytics-card h3 {
+  color: var(--text2);
+  font-size: 11px;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+.analytics-value {
+  color: var(--accent);
+  font-size: 28px;
+  font-weight: 700;
+}
+.analytics-list {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.8;
+  word-break: break-word;
+}
+.analytics-bar {
+  display: grid;
+  grid-template-columns: minmax(70px, auto) 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin: 7px 0;
+}
+.analytics-bar-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--bg3);
+}
+.analytics-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.analytics-bar-count { color: var(--text3); }
 </style>
 </head>
 <body>
@@ -613,7 +662,7 @@ body {
 <!-- ── Header ── -->
 <header class="header">
   <span class="logo">bgpx</span>
-  <span class="version">v26.175</span>
+  <span class="version">v26.176</span>
   <div class="header-spacer"></div>
   <div id="sse-dot" class="sse-dot reconnecting" title="SSE stream: connecting…"></div>
   <div class="state-badge" id="state-badge">
@@ -697,12 +746,12 @@ body {
         <span class="stat-val" id="s-total">0</span>
       </div>
       <div class="stat-row">
-        <span>IPv4 flowspec</span>
-        <span class="stat-val" id="s-ipv4">0</span>
+        <span>Unicast</span>
+        <span class="stat-val" id="s-unicast">0</span>
       </div>
       <div class="stat-row">
-        <span>IPv6 flowspec</span>
-        <span class="stat-val" id="s-ipv6">0</span>
+        <span>FlowSpec</span>
+        <span class="stat-val" id="s-flowspec">0</span>
       </div>
     </div>
 
@@ -724,8 +773,17 @@ body {
     <!-- Tab bar -->
     <div class="tab-bar">
       <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">‹</button>
-      <button class="tab-btn active" id="tab-routes-btn" onclick="switchTab('routes')">
-        Routes <span class="tab-count" id="routes-count">0</span>
+      <button class="tab-btn active" id="tab-total-btn" onclick="switchTab('total')">
+        Total <span class="tab-count" id="total-count">0</span>
+      </button>
+      <button class="tab-btn" id="tab-unicast-btn" onclick="switchTab('unicast')">
+        Unicast <span class="tab-count" id="unicast-count">0</span>
+      </button>
+      <button class="tab-btn" id="tab-flowspec-btn" onclick="switchTab('flowspec')">
+        FlowSpec <span class="tab-count" id="flowspec-count">0</span>
+      </button>
+      <button class="tab-btn" id="tab-analytics-btn" onclick="switchTab('analytics')">
+        Analytics
       </button>
       <button class="tab-btn" id="tab-log-btn" onclick="switchTab('log')">
         Live Log <span class="tab-count" id="log-count">0</span>
@@ -740,16 +798,7 @@ body {
     <div class="tab-content active" id="tab-routes">
       <div class="routes-wrap">
         <table class="routes-table" id="routes-table">
-          <thead>
-            <tr>
-              <th data-col="id">ID <span class="sort-arrow"></span></th>
-              <th data-col="afi">AFI <span class="sort-arrow"></span></th>
-              <th data-col="peer">Peer <span class="sort-arrow"></span></th>
-              <th>Match Criteria</th>
-              <th>Actions</th>
-              <th data-col="received_at">Received <span class="sort-arrow"></span></th>
-            </tr>
-          </thead>
+          <thead id="routes-head"></thead>
           <tbody id="routes-tbody">
             <tr class="empty"><td colspan="6">No routes — configure and start a session</td></tr>
           </tbody>
@@ -762,6 +811,24 @@ body {
           <button class="icon-btn" id="btn-prev-page" onclick="prevPage()" disabled style="margin: 0;">&lt; Prev</button>
           <button class="icon-btn" id="btn-next-page" onclick="nextPage()" disabled style="margin: 0;">Next &gt;</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Analytics tab -->
+    <div class="tab-content" id="tab-analytics">
+      <div class="analytics-grid">
+        <div class="analytics-card"><h3>Total routes</h3><div class="analytics-value" id="a-total">0</div></div>
+        <div class="analytics-card"><h3>Unicast</h3><div class="analytics-value" id="a-unicast">0</div></div>
+        <div class="analytics-card"><h3>FlowSpec</h3><div class="analytics-value" id="a-flowspec">0</div></div>
+        <div class="analytics-card"><h3>IPv4 / IPv6</h3><div class="analytics-list" id="a-afi">IPv4 0<br>IPv6 0</div></div>
+        <div class="analytics-card"><h3>Updates</h3><div class="analytics-list" id="a-events">Announce 0<br>Withdraw 0</div></div>
+        <div class="analytics-card"><h3>Top communities</h3><div class="analytics-list" id="a-communities">—</div></div>
+        <div class="analytics-card"><h3>Origin AS</h3><div class="analytics-list" id="a-origin-as">—</div></div>
+        <div class="analytics-card"><h3>Top next hops</h3><div class="analytics-list" id="a-next-hops">—</div></div>
+        <div class="analytics-card"><h3>Prefix lengths</h3><div class="analytics-list" id="a-prefix-lengths">—</div></div>
+        <div class="analytics-card"><h3>FlowSpec actions</h3><div class="analytics-list" id="a-actions">—</div></div>
+        <div class="analytics-card"><h3>FlowSpec protocols</h3><div class="analytics-list" id="a-protocols">—</div></div>
+        <div class="analytics-card"><h3>FlowSpec ports</h3><div class="analytics-list" id="a-ports">—</div></div>
       </div>
     </div>
 
@@ -822,6 +889,9 @@ let autoScroll      = true;
 let logFilter       = 'all';
 let evtSource       = null;
 let sidebarOpen     = true;
+let currentView     = 'total';
+let announceCount   = 0;
+let withdrawCount   = 0;
 
 // Sort state for routes table
 let sortCol = 'received_at';
@@ -846,16 +916,6 @@ window.addEventListener('DOMContentLoaded', () => {
     input.addEventListener('input', () => input.classList.remove('invalid'));
   });
 
-  // Sortable column headers
-  document.querySelectorAll('.routes-table th[data-col]').forEach(th => {
-    th.addEventListener('click', () => {
-      const col = th.dataset.col;
-      if (sortCol === col) sortAsc = !sortAsc;
-      else { sortCol = col; sortAsc = true; }
-      updateSortArrows();
-      renderRoutes();
-    });
-  });
 });
 
 // ── Sidebar toggle ─────────────────────────────────────────────────────────
@@ -870,7 +930,15 @@ function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById('tab-' + name + '-btn').classList.add('active');
-  document.getElementById('tab-' + name).classList.add('active');
+  if (['total', 'unicast', 'flowspec'].includes(name)) {
+    currentView = name;
+    currentPage = 1;
+    document.getElementById('tab-routes').classList.add('active');
+    renderRoutes();
+  } else {
+    document.getElementById('tab-' + name).classList.add('active');
+    if (name === 'analytics') renderAnalytics();
+  }
   document.getElementById('clear-btn').style.display = name === 'log' ? '' : 'none';
 }
 
@@ -919,6 +987,8 @@ function handleSnapshot(event) {
   // Rebuild routeMap from snapshot
   routeMap.clear();
   currentPage = 1;
+  announceCount = 0;
+  withdrawCount = 0;
   (event.routes || []).forEach(r => routeMap.set(r.id, r));
 
   // Update session state
@@ -944,9 +1014,14 @@ function handleLiveEvent(event) {
     const existing = routeMap.has(event.route_id);
     const route = {
       id:             event.route_id,
+      family:         event.family || (String(event.afi).endsWith('-unicast') ? 'unicast' : 'flowspec'),
       afi:            event.afi,
       peer:           event.peer,
       received_at:    event.ts,
+      prefix:         event.prefix,
+      next_hop:       event.next_hop,
+      as_path:        event.as_path || [],
+      communities:    event.communities || [],
       match:          event.match   || {},
       actions:        event.actions || [],
       path_attributes:event.path_attributes,
@@ -1053,21 +1128,89 @@ function updateFormState() {
 
 // ── RIB stats ──────────────────────────────────────────────────────────────
 function updateRibStats() {
-  let ipv4 = 0, ipv6 = 0;
-  routeMap.forEach(r => {
-    if (r.afi === 'ipv4-flowspec') ipv4++;
-    else if (r.afi === 'ipv6-flowspec') ipv6++;
-  });
+  const routes = [...routeMap.values()];
+  const unicast = routes.filter(r => r.family === 'unicast').length;
+  const flowspec = routes.filter(r => r.family === 'flowspec').length;
   setStat('s-total', routeMap.size);
-  setStat('s-ipv4', ipv4);
-  setStat('s-ipv6', ipv6);
-  document.getElementById('routes-count').textContent = routeMap.size;
+  setStat('s-unicast', unicast);
+  setStat('s-flowspec', flowspec);
+  document.getElementById('total-count').textContent = routeMap.size;
+  document.getElementById('unicast-count').textContent = unicast;
+  document.getElementById('flowspec-count').textContent = flowspec;
+  renderAnalytics();
 }
 
 function setStat(id, val) {
   const el = document.getElementById(id);
   el.textContent = val;
   el.className = 'stat-val' + (val > 0 ? ' nonzero' : '');
+}
+
+function renderAnalytics() {
+  const routes = [...routeMap.values()];
+  const unicast = routes.filter(r => r.family === 'unicast');
+  const flowspec = routes.filter(r => r.family === 'flowspec');
+  const ipv4 = routes.filter(r => String(r.afi).startsWith('ipv4')).length;
+  const ipv6 = routes.length - ipv4;
+  const communityCounts = new Map();
+  const originCounts = new Map();
+  const nextHopCounts = new Map();
+  const prefixLengthCounts = new Map();
+  const actionCounts = new Map();
+  const protocolCounts = new Map();
+  const portCounts = new Map();
+
+  unicast.forEach(route => {
+    countValues(communityCounts, route.communities || []);
+    const path = route.as_path || [];
+    if (path.length) {
+      const origin = String(path[path.length - 1]);
+      countValues(originCounts, [origin]);
+    }
+    if (route.next_hop) countValues(nextHopCounts, [route.next_hop]);
+    const prefixLength = String(route.prefix || '').split('/')[1];
+    if (prefixLength) countValues(prefixLengthCounts, [`/${prefixLength}`]);
+  });
+
+  flowspec.forEach(route => {
+    countValues(actionCounts, route.actions || []);
+    countValues(protocolCounts, route.match?.['ip-proto'] || []);
+    countValues(portCounts, [
+      ...(route.match?.port || []),
+      ...(route.match?.['src-port'] || []),
+      ...(route.match?.['dst-port'] || []),
+    ]);
+  });
+
+  document.getElementById('a-total').textContent = routes.length;
+  document.getElementById('a-unicast').textContent = unicast.length;
+  document.getElementById('a-flowspec').textContent = flowspec.length;
+  document.getElementById('a-afi').innerHTML = `IPv4 ${ipv4}<br>IPv6 ${ipv6}`;
+  document.getElementById('a-events').innerHTML = `Announce ${announceCount}<br>Withdraw ${withdrawCount}`;
+  document.getElementById('a-communities').innerHTML = renderCountBars(communityCounts);
+  document.getElementById('a-origin-as').innerHTML = renderCountBars(originCounts, 'AS');
+  document.getElementById('a-next-hops').innerHTML = renderCountBars(nextHopCounts);
+  document.getElementById('a-prefix-lengths').innerHTML = renderCountBars(prefixLengthCounts);
+  document.getElementById('a-actions').innerHTML = renderCountBars(actionCounts);
+  document.getElementById('a-protocols').innerHTML = renderCountBars(protocolCounts);
+  document.getElementById('a-ports').innerHTML = renderCountBars(portCounts);
+}
+
+function countValues(counts, values) {
+  values.forEach(value => counts.set(String(value), (counts.get(String(value)) || 0) + 1));
+}
+
+function renderCountBars(counts, prefix='') {
+  const rows = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const max = rows[0]?.[1] || 1;
+  return rows.length
+    ? rows.map(([name, count]) => `
+      <div class="analytics-bar">
+        <span title="${escHtml(prefix + name)}">${escHtml(prefix + name)}</span>
+        <span class="analytics-bar-track"><span class="analytics-bar-fill" style="width:${count / max * 100}%"></span></span>
+        <span class="analytics-bar-count">${count}</span>
+      </div>`).join('')
+    : '—';
 }
 
 // ── Routes table ───────────────────────────────────────────────────────────
@@ -1088,10 +1231,11 @@ function queueRender(flashId) {
 
 function renderRoutes(flashId) {
   const tbody  = document.getElementById('routes-tbody');
-  const routes = [...routeMap.values()];
+  const routes = filteredRoutes();
+  renderRouteHeader();
 
   if (!routes.length) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="6">No routes in RIB</td></tr>';
+    tbody.innerHTML = `<tr class="empty"><td colspan="${routeColumnCount()}">No ${currentView === 'total' ? '' : currentView + ' '}routes in RIB</td></tr>`;
     document.getElementById('page-info').textContent = 'No routes';
     document.getElementById('btn-prev-page').disabled = true;
     document.getElementById('btn-next-page').disabled = true;
@@ -1118,17 +1262,10 @@ function renderRoutes(flashId) {
   const pageRoutes = routes.slice(startIdx, endIdx);
 
   tbody.innerHTML = pageRoutes.flatMap(r => [
-    `<tr data-id="${escHtml(r.id)}" class="${r.id === flashId ? 'row-flash' : ''}" onclick="toggleRouteDetail('${escHtml(r.id)}')">
-      <td class="id-cell">${escHtml(r.id)}</td>
-      <td>${afiBadge(r.afi)}</td>
-      <td class="id-cell">${escHtml(r.peer || '')}</td>
-      <td class="match-cell">${renderMatch(r.match)}</td>
-      <td>${renderActions(r.actions || [])}</td>
-      <td class="ts-cell" title="${escHtml(formatServerTime(r.received_at))}">${absLocalTime(r.received_at)}</td>
-    </tr>`,
+    renderRouteRow(r, flashId),
     `<tr class="route-detail-row" id="detail-${escHtml(r.id)}">
-      <td class="route-detail-cell" colspan="6">
-        <div class="route-detail-inner">${escHtml(JSON.stringify({ match: r.match, actions: r.actions, path_attributes: r.path_attributes }, null, 2))}</div>
+      <td class="route-detail-cell" colspan="${routeColumnCount()}">
+        <div class="route-detail-inner">${escHtml(JSON.stringify(r, null, 2))}</div>
       </td>
     </tr>`,
   ]).join('');
@@ -1148,7 +1285,7 @@ function prevPage() {
 }
 
 function nextPage() {
-  const totalPages = Math.ceil(routeMap.size / pageSize);
+  const totalPages = Math.ceil(filteredRoutes().length / pageSize);
   if (currentPage < totalPages) {
     currentPage++;
     renderRoutes();
@@ -1160,14 +1297,89 @@ function toggleRouteDetail(id) {
   if (row) row.classList.toggle('open');
 }
 
-function updateSortArrows() {
-  document.querySelectorAll('.routes-table th[data-col]').forEach(th => {
-    const arrow = th.querySelector('.sort-arrow');
-    if (th.dataset.col === sortCol)
-      arrow.textContent = sortAsc ? ' ▲' : ' ▼';
-    else
-      arrow.textContent = '';
-  });
+function filteredRoutes() {
+  const routes = [...routeMap.values()];
+  if (currentView === 'unicast') return routes.filter(r => r.family === 'unicast');
+  if (currentView === 'flowspec') return routes.filter(r => r.family === 'flowspec');
+  return routes;
+}
+
+function sortRoutes(col) {
+  if (sortCol === col) sortAsc = !sortAsc;
+  else { sortCol = col; sortAsc = true; }
+  renderRoutes();
+}
+
+function sortableHeader(label, col) {
+  const arrow = sortCol === col ? (sortAsc ? ' ▲' : ' ▼') : '';
+  return `<th onclick="sortRoutes('${col}')">${label}<span class="sort-arrow">${arrow}</span></th>`;
+}
+
+function renderRouteHeader() {
+  let columns;
+  if (currentView === 'unicast') {
+    columns = [
+      sortableHeader('AFI', 'afi'), sortableHeader('Prefix', 'prefix'),
+      '<th>Community</th>', '<th>AS Path</th>',
+      sortableHeader('Next Hop', 'next_hop'), sortableHeader('Peer', 'peer'),
+      sortableHeader('Received', 'received_at'),
+    ];
+  } else if (currentView === 'flowspec') {
+    columns = [
+      sortableHeader('AFI', 'afi'), '<th>Match Criteria</th>',
+      '<th>Actions</th>', sortableHeader('Peer', 'peer'),
+      sortableHeader('Received', 'received_at'),
+    ];
+  } else {
+    columns = [
+      sortableHeader('Type', 'family'), sortableHeader('AFI', 'afi'),
+      '<th>Route</th>', '<th>Policy / Path</th>',
+      sortableHeader('Peer', 'peer'), sortableHeader('Received', 'received_at'),
+    ];
+  }
+  document.getElementById('routes-head').innerHTML = `<tr>${columns.join('')}</tr>`;
+}
+
+function routeColumnCount() {
+  return currentView === 'unicast' ? 7 : currentView === 'flowspec' ? 5 : 6;
+}
+
+function renderRouteRow(r, flashId) {
+  const start = `<tr data-id="${escHtml(r.id)}" class="${r.id === flashId ? 'row-flash' : ''}" onclick="toggleRouteDetail('${escHtml(r.id)}')">`;
+  const end = '</tr>';
+  const received = `<td class="ts-cell" title="${escHtml(formatServerTime(r.received_at))}">${absLocalTime(r.received_at)}</td>`;
+
+  if (currentView === 'unicast') {
+    return start +
+      `<td>${afiBadge(r.afi)}</td>` +
+      `<td>${escHtml(r.prefix || '')}</td>` +
+      `<td>${renderCommunities(r.communities || [])}</td>` +
+      `<td>${escHtml((r.as_path || []).join(' ') || '—')}</td>` +
+      `<td>${escHtml(r.next_hop || '—')}</td>` +
+      `<td class="id-cell">${escHtml(r.peer || '')}</td>` +
+      received + end;
+  }
+  if (currentView === 'flowspec') {
+    return start +
+      `<td>${afiBadge(r.afi)}</td>` +
+      `<td class="match-cell">${renderMatch(r.match)}</td>` +
+      `<td>${renderActions(r.actions || [])}</td>` +
+      `<td class="id-cell">${escHtml(r.peer || '')}</td>` +
+      received + end;
+  }
+  const route = r.family === 'unicast'
+    ? escHtml(r.prefix || '')
+    : renderMatch(r.match);
+  const policy = r.family === 'unicast'
+    ? escHtml((r.as_path || []).join(' ') || '—')
+    : renderActions(r.actions || []);
+  return start +
+    `<td>${escHtml(r.family || '')}</td>` +
+    `<td>${afiBadge(r.afi)}</td>` +
+    `<td class="match-cell">${route}</td>` +
+    `<td>${policy}</td>` +
+    `<td class="id-cell">${escHtml(r.peer || '')}</td>` +
+    received + end;
 }
 
 function afiBadge(afi) {
@@ -1201,6 +1413,12 @@ function renderActions(actions) {
   }).join('') || '<span style="color:var(--text3)">—</span>';
 }
 
+function renderCommunities(communities) {
+  return communities.map(c =>
+    `<span class="action-badge action-other">${escHtml(c)}</span>`
+  ).join('') || '<span style="color:var(--text3)">—</span>';
+}
+
 function formatRateLimit(a) {
   const m = a.match(/^rate-limit=(\d+)(bps|pps)$/);
   if (!m) return a;
@@ -1212,7 +1430,8 @@ function formatRateLimit(a) {
 }
 
 function exportRoutes() {
-  const data = JSON.stringify({ count: routeMap.size, routes: [...routeMap.values()] }, null, 2);
+  const routes = filteredRoutes();
+  const data = JSON.stringify({ count: routes.length, routes }, null, 2);
   const blob = new Blob([data], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
@@ -1243,6 +1462,9 @@ function appendLogEntry(event) {
   const wrap  = document.getElementById('log-wrap');
   const empty = document.getElementById('log-empty');
   if (empty) empty.style.display = 'none';
+  if (event.type === 'announce') announceCount++;
+  if (event.type === 'withdraw') withdrawCount++;
+  renderAnalytics();
 
   const entry = document.createElement('div');
   entry.className = 'log-entry' + (matchesFilter(event.type, event.level) ? '' : ' hidden');
@@ -1305,9 +1527,11 @@ function logBadge(event) {
 
 function logMsg(event) {
   let msg = escHtml(event.message || '');
-  if ((event.type === 'announce' || event.type === 'withdraw') && event.match) {
-    const parts = Object.entries(event.match)
-      .map(([k,v]) => `${k}=${Array.isArray(v) ? v.join(' ') : v}`);
+  if (event.type === 'announce' || event.type === 'withdraw') {
+    const parts = event.family === 'unicast'
+      ? [`prefix=${event.prefix || ''}`]
+      : Object.entries(event.match || {})
+        .map(([k,v]) => `${k}=${Array.isArray(v) ? v.join(' ') : v}`);
     if (event.actions && event.actions.length)
       parts.push('→ ' + event.actions.join(', '));
     msg += `  <span style="color:var(--text2)">${escHtml(parts.join('  '))}</span>`;
@@ -1465,7 +1689,10 @@ async function clearLog() {
   document.getElementById('log-wrap').innerHTML =
     '<div class="log-empty" id="log-empty">Log cleared</div>';
   logCount = 0;
+  announceCount = 0;
+  withdrawCount = 0;
   document.getElementById('log-count').textContent = 0;
+  renderAnalytics();
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

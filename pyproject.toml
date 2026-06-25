@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bgpx"
-version = "26.175"
-description = "BGP Flowspec Receiver — RFC 4271 · RFC 8955/8956 (IPv4/IPv6) · RFC 6793 (4-byte ASN)"
+version = "26.176"
+description = "BGP IPv4/IPv6 Unicast and FlowSpec Receiver with web UI"
 requires-python = ">=3.11"
 dependencies = ["aiohttp>=3.9"]
 

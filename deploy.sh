@@ -137,6 +137,12 @@ prompt_rust() {
 prompt_rust
 
 SRC_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+RUST_BUILD_DIR=""
+
+cleanup() {
+  [[ -z "${RUST_BUILD_DIR}" ]] || rm -rf "${RUST_BUILD_DIR}"
+}
+trap cleanup EXIT
 
 if [[ "${USE_RUST}" -eq 1 ]]; then
   if ! command -v cargo >/dev/null 2>&1; then
@@ -162,7 +168,10 @@ if [[ "${USE_RUST}" -eq 1 ]]; then
   fi
 
   echo "Compiling Rust BGP parser extension..."
-  cargo build --release --manifest-path "${SRC_DIR}/bgpx_rust/Cargo.toml"
+  RUST_BUILD_DIR="$(mktemp -d)"
+  cp "${SRC_DIR}/bgpx_rust/Cargo.toml" "${RUST_BUILD_DIR}/"
+  cp -a "${SRC_DIR}/bgpx_rust/src" "${RUST_BUILD_DIR}/"
+  cargo build --release --manifest-path "${RUST_BUILD_DIR}/Cargo.toml"
 fi
 
 VENV_DIR="${INSTALL_DIR}/venv"
@@ -184,6 +193,9 @@ tar \
   --exclude='__pycache__' \
   --exclude='*.pyc' \
   --exclude='*.pyo' \
+  --exclude='bgpx_rust/target' \
+  --exclude='tests' \
+  --exclude='test.sh' \
   --exclude='deploy.sh' \
   --exclude='uninstall.sh' \
   -C "${SRC_DIR}" \
@@ -193,15 +205,27 @@ tar \
 "${VENV_DIR}/bin/python" -m pip install --upgrade pip
 "${VENV_DIR}/bin/pip" install "${APP_DIR}"
 
+MESSAGE_DIR=$("${VENV_DIR}/bin/python" -I -c \
+  "import bgpx.message, pathlib; print(pathlib.Path(bgpx.message.__file__).parent)")
+RUST_SO="${MESSAGE_DIR}/libbgpx_rust.so"
+mapfile -t RUST_SO_PATHS < <("${VENV_DIR}/bin/python" -I - <<'PY'
+import sysconfig
+from pathlib import Path
+
+for key in ("purelib", "platlib"):
+    print(Path(sysconfig.get_path(key)) / "bgpx/message/libbgpx_rust.so")
+PY
+)
+rm -f "${RUST_SO}" "${RUST_SO_PATHS[@]}"
+
 if [[ "${USE_RUST}" -eq 1 ]]; then
-  SITEPACKAGES=$("${VENV_DIR}/bin/python" -c "import sysconfig; print(sysconfig.get_path('purelib'))")
-  mkdir -p "${SITEPACKAGES}/bgpx/message"
-  cp "${SRC_DIR}/bgpx_rust/target/release/libbgpx_rust.so" "${SITEPACKAGES}/bgpx/message/libbgpx_rust.so"
-  echo "Installed Rust parser extension to ${SITEPACKAGES}/bgpx/message/libbgpx_rust.so"
+  cp "${RUST_BUILD_DIR}/target/release/libbgpx_rust.so" "${RUST_SO}"
+  echo "Installed Rust parser extension to ${RUST_SO}"
 fi
 
-"${VENV_DIR}/bin/python" - <<'PY'
+"${VENV_DIR}/bin/python" -I - "${USE_RUST}" <<'PY'
 from importlib import resources
+import sys
 
 ui = resources.files("bgpx").joinpath("web", "ui.html")
 if not ui.is_file():
@@ -210,6 +234,14 @@ text = ui.read_text(encoding="utf-8")
 if "<!DOCTYPE html>" not in text:
     raise SystemExit("Installed bgpx/web/ui.html does not look like the Web UI")
 print("Verified installed package data: bgpx/web/ui.html")
+
+from bgpx.message import parser
+
+expected_rust = sys.argv[1] == "1"
+if (parser._lib is not None) != expected_rust:
+    raise SystemExit("Installed parser engine does not match deployment selection")
+engine = "Rust FFI" if expected_rust else "Python"
+print(f"Verified installed parser engine: {engine}")
 PY
 
 if [[ "${EUID}" -eq 0 ]]; then
@@ -234,7 +266,7 @@ if [[ "${CREATE_SERVICE}" -eq 1 ]]; then
 
   cat >"${SERVICE_FILE}" <<EOF
 [Unit]
-Description=BGP Flowspec Receiver
+Description=BGP Unicast and FlowSpec Receiver
 After=network-online.target
 Wants=network-online.target
 

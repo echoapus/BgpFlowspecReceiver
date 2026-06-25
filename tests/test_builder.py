@@ -65,6 +65,12 @@ def test_open_contains_flowspec_caps():
     assert b'\x85' in msg
 
 
+def test_open_contains_unicast_caps():
+    msg = build_open(65001, 90, "1.2.3.4")
+    assert struct.pack("!HBB", 1, 0, 1) in msg
+    assert struct.pack("!HBB", 2, 0, 1) in msg
+
+
 def test_open_contains_4byte_asn_cap():
     msg = build_open(65001, 90, "1.2.3.4")
     # CAP_4BYTE_ASN = 65 (0x41)

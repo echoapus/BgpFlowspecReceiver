@@ -166,3 +166,39 @@ def test_update_dispatch_emits_announce_and_withdraw_events():
         assert route["path_attributes"] == path_attributes
 
     asyncio.run(run())
+
+
+def test_update_dispatch_stores_unicast_route_metadata():
+    async def run():
+        session, events = _session()
+        session._set_state(ESTABLISHED)
+        path_attributes = [
+            {"code": 2, "name": "AS_PATH", "value": [
+                {"type": "AS_SEQUENCE", "asns": [65000, 65100]}
+            ]},
+            {"code": 8, "name": "COMMUNITIES", "value": ["65000:100"]},
+        ]
+        with patch(
+            "bgpx.session.parse_update_details",
+            return_value={
+                "announce": {"ipv4-unicast": [{
+                    "prefix": "203.0.113.0/24",
+                    "next_hop": "192.0.2.254",
+                }]},
+                "withdraw": {},
+                "actions": [],
+                "path_attributes": path_attributes,
+            },
+        ):
+            await session._dispatch(MSG_UPDATE, b"", FakeWriter())
+
+        route = session.rib.all()[0]
+        assert route["family"] == "unicast"
+        assert route["prefix"] == "203.0.113.0/24"
+        assert route["as_path"] == [65000, 65100]
+        assert route["communities"] == ["65000:100"]
+        announce = [e for e in events.history() if e["type"] == "announce"][0]
+        assert announce["family"] == "unicast"
+        assert announce["prefix"] == "203.0.113.0/24"
+
+    asyncio.run(run())

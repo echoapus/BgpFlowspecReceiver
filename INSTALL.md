@@ -1,4 +1,4 @@
-# Installation Guide
+# bgpx 26.176 Installation Guide
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@
 
 ### Network Requirements
 - **BGP peer connectivity** — can reach your peer router on port 179
-- **Port 179** — available for BGP (default, can be changed with `--listen-port`)
+- **Port 179** — available for active BGP and the default passive listener
 
 ### Optional
 - **tcpdump** — for packet capture feature in web UI
@@ -21,6 +21,8 @@
   # macOS
   brew install tcpdump
   ```
+- **Rust and Cargo** — required only for `deploy.sh --rust` and the full
+  `test.sh` matrix
 
 ---
 
@@ -68,6 +70,14 @@ The script asks which Web UI port to bind. Press Enter to use `8080`.
 
 After `pip install`, the script verifies that the installed package can load `bgpx/web/ui.html`. If package data is missing, deployment stops immediately instead of leaving a service that returns HTTP 500 for the Web UI.
 
+Install the Rust parser and verify that Python loads the compiled FFI library:
+
+```bash
+sudo ./deploy.sh --rust
+```
+
+Re-running deployment without `--rust` removes any previously installed Rust
+library and verifies that the Python parser is active.
 
 Noninteractive install:
 ```bash
@@ -91,7 +101,7 @@ sudo ./deploy.sh --cap-net-bind-service
 
 Common combined production install:
 ```bash
-sudo ./deploy.sh --service --cap-net-bind-service --web-port 8080
+sudo ./deploy.sh --rust --service --cap-net-bind-service --web-port 8080
 ```
 
 After deployment:
@@ -131,7 +141,10 @@ For BGP (port 179), add port mapping:
 docker run --rm -p 179:179 -p 8080:8080 bgpx
 ```
 
-> **Note:** Requires `--cap-add=NET_BIND_SERVICE` or running as root.
+The image runs as root by default. If you change it to a non-root user, add
+`--cap-add=NET_BIND_SERVICE` or use a non-privileged passive listen port.
+The provided Dockerfile installs the Python parser. Use host deployment with
+`deploy.sh --rust` when the Rust FFI parser is required.
 
 ---
 
@@ -168,14 +181,9 @@ getcap $(readlink -f $(which python3))
 
 ### Option C: Use a custom port
 
-Run on a non-privileged port:
-```bash
-bgpx --local-as 65001 --router-id 10.0.0.1 \
-     --peer-ip 10.0.0.2 --peer-as 65000 \
-     --listen-port 9179
-```
-
-Then configure your peer router to connect to port 9179.
+Start `bgpx`, set **Listen Port** in the Web UI to a non-privileged port such
+as `9179`, then configure the peer router to connect to that port. Active
+outbound connections still use TCP port 179.
 
 ---
 
@@ -192,6 +200,13 @@ Run tests:
 pytest
 ```
 
+Run Python fallback, shell/JavaScript checks, Rust fmt/Clippy/unit tests, and
+the release Rust library through Python FFI:
+
+```bash
+./test.sh
+```
+
 Run with debug logging:
 ```bash
 bgpx --log-level DEBUG
@@ -204,9 +219,13 @@ bgpx --log-level DEBUG
 ### 1. Check Installation
 
 ```bash
-bgpx --version
-# or
 bgpx --help
+```
+
+The installed package version is also available as:
+
+```bash
+python -c 'import bgpx; print(bgpx.__version__)'
 ```
 
 ### 2. Start the Web UI
@@ -217,7 +236,7 @@ bgpx
 
 Open `http://localhost:8080` in your browser. You should see:
 - Configuration panel on the left
-- Routes, Live Log, and Capture tabs
+- Total, Unicast, FlowSpec, Analytics, and Live Log tabs
 - "IDLE" state in the top-right badge
 
 If you installed with `deploy.sh`, open the Web UI port selected during deployment. For example, `--web-port 9090` means `http://localhost:9090`.
@@ -247,7 +266,7 @@ bgpx --local-as 65001 --router-id 10.0.0.1 \
 **Solutions:**
 1. Run with `sudo` (not recommended for production)
 2. Use `setcap` (Option B above)
-3. Use a custom port with `--listen-port`
+3. Set a non-privileged **Listen Port** in the Web UI
 
 ### Issue: Active connection fails, passive only works
 
@@ -288,8 +307,23 @@ sudo lsof -i :179
 # Kill the process (if it's an old bgpx instance)
 sudo kill -9 <PID>
 
-# Or use a different port
-bgpx --listen-port 9179
+# Or set a different passive Listen Port in the Web UI
+```
+
+### Issue: installed parser engine does not match deployment selection
+
+Re-run the current `deploy.sh`. It locates the installed `bgpx.message`
+directory directly, removes stale Rust libraries from both `purelib` and
+`platlib`, and verifies imports in Python isolated mode:
+
+```bash
+sudo ./deploy.sh --rust
+```
+
+To switch back to Python and remove the installed `.so`:
+
+```bash
+sudo ./deploy.sh
 ```
 
 ---
@@ -301,10 +335,11 @@ bgpx --listen-port 9179
 ```bash
 docker run --rm -p 179:179 -p 8080:8080 \
   -v /tmp/routes:/data \
-  -e "ARGS=--local-as 65001 --router-id 10.0.0.1 \
-            --peer-ip 10.0.0.2 --peer-as 65000 \
-            --json-output /data/routes.json" \
-  bgpx
+  bgpx \
+  --host 0.0.0.0 --port 8080 \
+  --local-as 65001 --router-id 10.0.0.1 \
+  --peer-ip 10.0.0.2 --peer-as 65000 \
+  --json-output /data/routes.json
 ```
 
 ### Custom network
@@ -316,10 +351,11 @@ docker network create bgpnet
 # Run two containers (one as peer, one as receiver)
 docker run --rm --network bgpnet --name receiver \
   -p 8080:8080 \
-  -e "ARGS=--listen-port 179 --local-as 65001 \
-            --router-id 10.0.0.1 --peer-ip 10.0.0.2 \
-            --peer-as 65000" \
-  bgpx
+  bgpx \
+  --host 0.0.0.0 --port 8080 \
+  --local-as 65001 \
+  --router-id 10.0.0.1 --peer-ip 10.0.0.2 \
+  --peer-as 65000
 ```
 
 ---
@@ -348,7 +384,7 @@ Create `/etc/systemd/system/bgpx.service`:
 
 ```ini
 [Unit]
-Description=BGP Flowspec Receiver
+Description=BGP Unicast and FlowSpec Receiver
 After=network-online.target
 Wants=network-online.target
 
@@ -392,7 +428,7 @@ Use `uninstall.sh` to remove a deployment created by `deploy.sh`:
 sudo ./uninstall.sh
 ```
 
-The script shows a removal plan and asks for confirmation. It stops and disables `bgpx.service` when present, removes `/etc/systemd/system/bgpx.service`, removes `/usr/local/bin/bgpx` only when it points into the selected install directory, and removes `/opt/bgpx`.
+The script shows a removal plan and asks for confirmation. It stops and disables `bgpx.service` when present, removes `/etc/systemd/system/bgpx.service`, removes `/usr/local/bin/bgpx` only when it points into the selected install directory, and removes `/opt/bgpx`. It does not modify the source checkout or local Cargo build cache.
 
 Noninteractive uninstall:
 
@@ -418,7 +454,7 @@ sudo ./uninstall.sh --install-dir /opt/custom-bgpx
 
 1. **Review Configuration** — see [README.md](README.md) for all flags and options
 2. **Test with a Peer** — connect to your BGP peer router
-3. **Monitor Routes** — check the web UI's Routes tab for received flowspec rules
+3. **Monitor Routes** — use Total, Unicast, and FlowSpec tabs
 4. **Export RIB** — use `--json-output` to persist routes to a file
 5. **Set Up Monitoring** — integrate with your monitoring stack
 
@@ -445,4 +481,3 @@ sudo ./uninstall.sh --install-dir /opt/custom-bgpx
    print(ui.is_file(), ui)
    PY
    ```
-

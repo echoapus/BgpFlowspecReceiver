@@ -15,7 +15,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="bgpx",
         description=(
-            "BGP Flowspec Receiver — open http://localhost:8080 to configure\n"
+            "BGP Unicast and FlowSpec Receiver — open http://localhost:8080 to configure\n"
             "and monitor, or pass BGP flags to auto-start the session."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

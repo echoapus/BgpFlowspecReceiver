@@ -3,10 +3,12 @@
 import ipaddress
 import socket
 import struct
+import pytest
 
 from bgpx.constants import (
     AFI_IPV6, SAFI_FLOWSPEC,
-    ATTR_MP_REACH_NLRI, ATTR_IPV6_EXT_COMMUNITIES,
+    ATTR_MP_REACH_NLRI, ATTR_MP_UNREACH_NLRI,
+    ATTR_IPV6_EXT_COMMUNITIES, ATTR_NEXT_HOP,
 )
 from bgpx.message.parser import parse_open, parse_update, parse_update_details
 
@@ -49,6 +51,59 @@ def test_parse_update_details_decodes_ipv6_flowspec_and_ipv6_redirect_action():
 def test_parse_update_preserves_original_tuple_api():
     body = _update(_attr(0xC0, ATTR_IPV6_EXT_COMMUNITIES, b""))
     assert parse_update(body) == ({}, {}, [])
+
+
+def test_parse_ipv4_unicast_announce_and_withdraw():
+    withdrawn = bytes([24, 198, 51, 100])
+    announced = bytes([25, 203, 0, 113, 128])
+    next_hop = _attr(0x40, ATTR_NEXT_HOP, socket.inet_aton("192.0.2.1"))
+    body = (
+        struct.pack("!H", len(withdrawn)) + withdrawn +
+        struct.pack("!H", len(next_hop)) + next_hop +
+        announced
+    )
+
+    details = parse_update_details(body)
+
+    assert details["withdraw"]["ipv4-unicast"] == [
+        {"prefix": "198.51.100.0/24"}
+    ]
+    assert details["announce"]["ipv4-unicast"] == [{
+        "prefix": "203.0.113.128/25",
+        "next_hop": "192.0.2.1",
+    }]
+
+
+def test_parse_ipv6_unicast_mp_reach_and_unreach():
+    announced = bytes([32]) + ipaddress.IPv6Address("2001:db8::").packed[:4]
+    withdrawn = bytes([48]) + ipaddress.IPv6Address("2001:db8:1::").packed[:6]
+    next_hop = ipaddress.IPv6Address("2001:db8::1").packed
+    mp_reach = (
+        struct.pack("!HBB", AFI_IPV6, 1, len(next_hop)) +
+        next_hop + b"\x00" + announced
+    )
+    mp_unreach = struct.pack("!HB", AFI_IPV6, 1) + withdrawn
+    body = _update(
+        _attr(0x80, ATTR_MP_REACH_NLRI, mp_reach),
+        _attr(0x80, ATTR_MP_UNREACH_NLRI, mp_unreach),
+    )
+
+    details = parse_update_details(body)
+
+    assert details["announce"]["ipv6-unicast"] == [{
+        "prefix": "2001:db8::/32",
+        "next_hop": "2001:db8::1",
+    }]
+    assert details["withdraw"]["ipv6-unicast"] == [{
+        "prefix": "2001:db8:1::/48",
+    }]
+
+
+def test_parse_unicast_rejects_truncated_prefix():
+    body = b"\x00\x00\x00\x00" + bytes([24, 203, 0])
+
+    with pytest.raises(ValueError, match="Truncated unicast NLRI"):
+        parse_update_details(body)
 
 
 def test_parse_update_details_retains_unknown_path_attribute_raw():
@@ -101,6 +156,7 @@ def test_parse_open_decodes_4byte_asn_capability():
     assert res["peer_as"] == 123456
     assert res["hold_time"] == 90
     assert res["router_id"] == "192.0.2.1"
+    assert res["supports_4byte_asn"] is True
 
 
 def test_parse_open_no_capabilities():
@@ -113,6 +169,19 @@ def test_parse_open_no_capabilities():
     )
     res = parse_open(body)
     assert res["peer_as"] == 65000
+    assert res["supports_4byte_asn"] is False
+
+
+def test_parse_update_decodes_negotiated_4byte_as_path():
+    as_path = bytes([2, 2]) + struct.pack("!II", 65000, 123456)
+    body = _update(_attr(0x40, 2, as_path))
+
+    details = parse_update_details(body, asn_len=4)
+
+    assert details["path_attributes"][0]["value"] == [{
+        "type": "AS_SEQUENCE",
+        "asns": [65000, 123456],
+    }]
 
 
 def test_parse_open_other_capabilities_only():

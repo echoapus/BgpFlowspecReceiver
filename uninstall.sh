@@ -7,7 +7,6 @@ BIN_LINK="/usr/local/bin/${APP_NAME}"
 SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
 FORCE=0
 KEEP_DATA=0
-SRC_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<'EOF'
@@ -139,13 +138,6 @@ elif [[ -e "${INSTALL_DIR}" ]]; then
 else
   echo "Install directory: not found"
 fi
-
-# ponytail: clean up Rust build artifacts and local shared library if present
-if [[ -f "${SRC_DIR}/bgpx_rust/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then
-  echo "Cleaning Rust build artifacts..."
-  cargo clean --manifest-path "${SRC_DIR}/bgpx_rust/Cargo.toml" >/dev/null 2>&1 || true
-fi
-rm -f "${SRC_DIR}/bgpx/message/libbgpx_rust.so"
 
 echo
 echo "Uninstall complete."

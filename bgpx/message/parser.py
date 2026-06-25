@@ -1,6 +1,7 @@
 """Parse incoming BGP messages (RFC 4271)."""
 
 import ctypes
+import ipaddress
 import json
 import os
 import socket
@@ -35,7 +36,9 @@ if os.path.exists(_lib_path):
         _lib.parse_open_rust.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
         _lib.parse_open_rust.restype = ctypes.c_void_p
 
-        _lib.parse_update_details_rust.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        _lib.parse_update_details_rust.argtypes = [
+            ctypes.c_void_p, ctypes.c_size_t, ctypes.c_size_t,
+        ]
         _lib.parse_update_details_rust.restype = ctypes.c_void_p
 
         _lib.free_string.argtypes = [ctypes.c_void_p]
@@ -106,18 +109,15 @@ def parse_header(data: bytes) -> tuple[int, int]:
 def parse_open(body: bytes) -> dict:
     """Parse a BGP OPEN message body and return a dict with peer info."""
     if _lib is not None:
-        ptr = _lib.parse_open_rust(body, len(body))
-        if ptr:
-            try:
-                js_str = ctypes.string_at(ptr).decode("utf-8")
-                return json.loads(js_str)
-            finally:
-                _lib.free_string(ptr)
+        parsed = _rust_json(_lib.parse_open_rust(body, len(body)))
+        if parsed is not None:
+            return parsed
 
     version = body[0]
     peer_as = struct.unpack("!H", body[1:3])[0]
     hold_time = struct.unpack("!H", body[3:5])[0]
     router_id = socket.inet_ntoa(body[5:9])
+    supports_4byte_asn = False
 
     # Parse optional parameters for 4-byte ASN capability (RFC 6793)
     # ponytail: parse 4-octet ASN capability if present in OPEN optional parameters
@@ -137,6 +137,7 @@ def parse_open(body: bytes) -> dict:
                     cap_len = body[cap_offset + 1]
                     cap_offset += 2
                     if cap_code == 65 and cap_len == 4 and cap_offset + 4 <= len(body):
+                        supports_4byte_asn = True
                         peer_as = struct.unpack("!I", body[cap_offset:cap_offset + 4])[0]
                     cap_offset += cap_len
             offset += param_len
@@ -146,6 +147,7 @@ def parse_open(body: bytes) -> dict:
         "peer_as":   peer_as,
         "hold_time": hold_time,
         "router_id": router_id,
+        "supports_4byte_asn": supports_4byte_asn,
     }
 
 
@@ -161,26 +163,24 @@ def parse_update(body: bytes) -> tuple[dict, dict, list]:
     return details["announce"], details["withdraw"], details["actions"]
 
 
-def parse_update_details(body: bytes) -> dict:
+def parse_update_details(body: bytes, asn_len: int = 2) -> dict:
     """Parse a BGP UPDATE and retain decoded/raw path-attribute metadata."""
     if _lib is not None:
-        ptr = _lib.parse_update_details_rust(body, len(body))
-        if ptr:
-            try:
-                js_str = ctypes.string_at(ptr).decode("utf-8")
-                return json.loads(js_str)
-            finally:
-                _lib.free_string(ptr)
+        parsed = _rust_json(
+            _lib.parse_update_details_rust(body, len(body), asn_len)
+        )
+        if parsed is not None:
+            return parsed
 
     offset = 0
 
-    # Skip IPv4 unicast withdrawn routes (not flowspec)
     if offset + 2 > len(body):
         raise ValueError("UPDATE too short for withdrawn-routes length field")
     withdrawn_len = struct.unpack("!H", body[offset:offset + 2])[0]
     offset += 2
     if offset + withdrawn_len > len(body):
         raise ValueError(f"UPDATE withdrawn_len {withdrawn_len} exceeds message body")
+    withdrawn_payload = body[offset:offset + withdrawn_len]
     offset += withdrawn_len
 
     # Walk path attributes
@@ -198,46 +198,94 @@ def parse_update_details(body: bytes) -> dict:
     path_attributes: list[dict] = []
 
     while offset < attr_end:
+        if offset + 2 > attr_end:
+            raise ValueError("Truncated path-attribute header")
         flags = body[offset]
         atype = body[offset + 1]
         offset += 2
 
         # Extended-length flag means the length field is 2 bytes instead of 1
         if flags & 0x10:
+            if offset + 2 > attr_end:
+                raise ValueError("Truncated extended path-attribute length")
             alen = struct.unpack("!H", body[offset:offset + 2])[0]
             offset += 2
         else:
+            if offset >= attr_end:
+                raise ValueError("Truncated path-attribute length")
             alen = body[offset]
             offset += 1
 
+        if offset + alen > attr_end:
+            raise ValueError("Path attribute exceeds declared attribute length")
         abody  = body[offset:offset + alen]
         offset += alen
 
-        attr_info = _decode_path_attribute(flags, atype, abody)
+        attr_info = _decode_path_attribute(flags, atype, abody, asn_len)
         path_attributes.append(attr_info)
 
         if atype == ATTR_MP_REACH_NLRI and len(abody) > 3:
             afi  = struct.unpack("!H", abody[0:2])[0]
             safi = abody[2]
-            if safi == SAFI_FLOWSPEC:
+            if safi == SAFI_FLOWSPEC and afi in (AFI_IPV4, AFI_IPV6):
                 nh_len     = abody[3]
                 # Skip next-hop bytes + 1 reserved SNPA byte
                 nlri_start = 4 + nh_len + 1
+                if nlri_start > len(abody):
+                    raise ValueError("MP_REACH next-hop exceeds attribute length")
                 label      = "ipv6-flowspec" if afi == AFI_IPV6 else "ipv4-flowspec"
                 announce[label] = parse_nlri_list(abody[nlri_start:], afi)
+            elif safi == 1 and afi in (AFI_IPV4, AFI_IPV6):
+                nh_len = abody[3]
+                nlri_start = 4 + nh_len + 1
+                if nlri_start > len(abody):
+                    raise ValueError("MP_REACH next-hop exceeds attribute length")
+                next_hop = _format_next_hop(abody[4:4 + nh_len])
+                label = "ipv6-unicast" if afi == AFI_IPV6 else "ipv4-unicast"
+                announce[label] = [
+                    {"prefix": prefix, "next_hop": next_hop}
+                    for prefix in _parse_unicast_nlri(abody[nlri_start:], afi)
+                ]
 
         elif atype == ATTR_MP_UNREACH_NLRI and len(abody) > 2:
             afi  = struct.unpack("!H", abody[0:2])[0]
             safi = abody[2]
-            if safi == SAFI_FLOWSPEC:
+            if safi == SAFI_FLOWSPEC and afi in (AFI_IPV4, AFI_IPV6):
                 label      = "ipv6-flowspec" if afi == AFI_IPV6 else "ipv4-flowspec"
                 withdraw[label] = parse_nlri_list(abody[3:], afi)
+            elif safi == 1 and afi in (AFI_IPV4, AFI_IPV6):
+                label = "ipv6-unicast" if afi == AFI_IPV6 else "ipv4-unicast"
+                withdraw[label] = [
+                    {"prefix": prefix}
+                    for prefix in _parse_unicast_nlri(abody[3:], afi)
+                ]
 
         elif atype == ATTR_EXT_COMMUNITIES:
             actions.extend(parse_ext_communities(abody))
 
         elif atype == ATTR_IPV6_EXT_COMMUNITIES:
             actions.extend(parse_ipv6_ext_communities(abody))
+
+    if withdrawn_payload:
+        withdraw["ipv4-unicast"] = [
+            {"prefix": prefix}
+            for prefix in _parse_unicast_nlri(withdrawn_payload, AFI_IPV4)
+        ]
+
+    trailing_nlri = body[attr_end:]
+    if trailing_nlri:
+        next_hop = next(
+            (
+                attribute.get("value")
+                for attribute in path_attributes
+                if attribute["code"] == ATTR_NEXT_HOP
+            ),
+            "",
+        )
+        announce["ipv4-unicast"] = [
+            {"prefix": prefix, "next_hop": next_hop}
+            for prefix in _parse_unicast_nlri(trailing_nlri, AFI_IPV4)
+        ]
 
     return {
         "announce": announce,
@@ -247,7 +295,41 @@ def parse_update_details(body: bytes) -> dict:
     }
 
 
-def _decode_path_attribute(flags: int, atype: int, data: bytes) -> dict:
+def _rust_json(ptr) -> dict | None:
+    if not ptr:
+        return None
+    try:
+        return json.loads(ctypes.string_at(ptr).decode("utf-8"))
+    finally:
+        _lib.free_string(ptr)
+
+
+def _parse_unicast_nlri(payload: bytes, afi: int) -> list[str]:
+    max_bits = 128 if afi == AFI_IPV6 else 32
+    addr_size = 16 if afi == AFI_IPV6 else 4
+    address_type = ipaddress.IPv6Address if afi == AFI_IPV6 else ipaddress.IPv4Address
+    prefixes: list[str] = []
+    offset = 0
+
+    while offset < len(payload):
+        prefix_len = payload[offset]
+        offset += 1
+        if prefix_len > max_bits:
+            raise ValueError(f"Invalid prefix length {prefix_len} for AFI {afi}")
+        byte_len = (prefix_len + 7) // 8
+        if offset + byte_len > len(payload):
+            raise ValueError("Truncated unicast NLRI")
+        raw = payload[offset:offset + byte_len]
+        offset += byte_len
+        address = address_type(raw.ljust(addr_size, b"\x00"))
+        prefixes.append(str(ipaddress.ip_network(f"{address}/{prefix_len}", strict=False)))
+
+    return prefixes
+
+
+def _decode_path_attribute(
+    flags: int, atype: int, data: bytes, asn_len: int = 2
+) -> dict:
     info = {
         "code": atype,
         "name": PATH_ATTR_NAMES.get(atype, f"ATTR_{atype}"),
@@ -261,7 +343,7 @@ def _decode_path_attribute(flags: int, atype: int, data: bytes) -> dict:
     }
 
     try:
-        decoded = _decode_path_attribute_value(atype, data)
+        decoded = _decode_path_attribute_value(atype, data, asn_len)
     except (ValueError, struct.error, OSError):
         decoded = None
 
@@ -272,12 +354,12 @@ def _decode_path_attribute(flags: int, atype: int, data: bytes) -> dict:
     return info
 
 
-def _decode_path_attribute_value(atype: int, data: bytes):
+def _decode_path_attribute_value(atype: int, data: bytes, asn_len: int = 2):
     if atype == ATTR_ORIGIN and len(data) >= 1:
         return ORIGIN_NAMES.get(data[0], f"unknown-{data[0]}")
 
     if atype == ATTR_AS_PATH:
-        return _parse_as_path(data, 2)
+        return _parse_as_path(data, asn_len)
 
     if atype == ATTR_NEXT_HOP and len(data) == 4:
         return socket.inet_ntoa(data)

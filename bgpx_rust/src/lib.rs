@@ -1,9 +1,9 @@
+use serde::Serialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::raw::c_char;
-use serde::Serialize;
-use serde_json::Value;
 
 // Constants
 const BGP_HEADER_LEN: usize = 19;
@@ -38,6 +38,7 @@ struct OpenResult {
     peer_as: u32,
     hold_time: u16,
     router_id: String,
+    supports_4byte_asn: bool,
 }
 
 #[derive(Serialize)]
@@ -71,7 +72,9 @@ struct AttrFlags {
 // ── Exported C APIs ─────────────────────────────────────────────────────────
 
 #[no_mangle]
-pub extern "C" fn parse_header_rust(
+/// # Safety
+/// `data` must reference `len` readable bytes; output pointers must be writable.
+pub unsafe extern "C" fn parse_header_rust(
     data: *const u8,
     len: usize,
     out_type: *mut u8,
@@ -96,7 +99,9 @@ pub extern "C" fn parse_header_rust(
 }
 
 #[no_mangle]
-pub extern "C" fn parse_open_rust(body: *const u8, len: usize) -> *mut c_char {
+/// # Safety
+/// `body` must reference `len` readable bytes.
+pub unsafe extern "C" fn parse_open_rust(body: *const u8, len: usize) -> *mut c_char {
     let slice = unsafe { std::slice::from_raw_parts(body, len) };
     if slice.len() < 9 {
         return std::ptr::null_mut();
@@ -105,6 +110,7 @@ pub extern "C" fn parse_open_rust(body: *const u8, len: usize) -> *mut c_char {
     let mut peer_as = u16::from_be_bytes([slice[1], slice[2]]) as u32;
     let hold_time = u16::from_be_bytes([slice[3], slice[4]]);
     let router_id = format!("{}.{}.{}.{}", slice[5], slice[6], slice[7], slice[8]);
+    let mut supports_4byte_asn = false;
 
     // Optional parameters for 4-byte ASN (Capability 65)
     if slice.len() > 10 {
@@ -115,7 +121,8 @@ pub extern "C" fn parse_open_rust(body: *const u8, len: usize) -> *mut c_char {
             let param_type = slice[offset];
             let param_len = slice[offset + 1] as usize;
             offset += 2;
-            if param_type == 2 { // Capabilities
+            if param_type == 2 {
+                // Capabilities
                 let mut cap_offset = offset;
                 let cap_end = std::cmp::min(offset + param_len, end);
                 while cap_offset + 2 <= cap_end {
@@ -123,6 +130,7 @@ pub extern "C" fn parse_open_rust(body: *const u8, len: usize) -> *mut c_char {
                     let cap_len = slice[cap_offset + 1] as usize;
                     cap_offset += 2;
                     if cap_code == 65 && cap_len == 4 && cap_offset + 4 <= slice.len() {
+                        supports_4byte_asn = true;
                         peer_as = u32::from_be_bytes([
                             slice[cap_offset],
                             slice[cap_offset + 1],
@@ -142,16 +150,25 @@ pub extern "C" fn parse_open_rust(body: *const u8, len: usize) -> *mut c_char {
         peer_as,
         hold_time,
         router_id,
+        supports_4byte_asn,
     };
     serialize_to_c_char(&res)
 }
 
 #[no_mangle]
-pub extern "C" fn parse_update_details_rust(body: *const u8, len: usize) -> *mut c_char {
+/// # Safety
+/// `body` must reference `len` readable bytes and `asn_len` must be 2 or 4.
+pub unsafe extern "C" fn parse_update_details_rust(
+    body: *const u8,
+    len: usize,
+    asn_len: usize,
+) -> *mut c_char {
+    if asn_len != 2 && asn_len != 4 {
+        return std::ptr::null_mut();
+    }
     let slice = unsafe { std::slice::from_raw_parts(body, len) };
     let mut offset = 0;
 
-    // Skip IPv4 unicast withdrawn routes
     if offset + 2 > slice.len() {
         return std::ptr::null_mut();
     }
@@ -160,6 +177,7 @@ pub extern "C" fn parse_update_details_rust(body: *const u8, len: usize) -> *mut
     if offset + withdrawn_len > slice.len() {
         return std::ptr::null_mut();
     }
+    let withdrawn_payload = &slice[offset..offset + withdrawn_len];
     offset += withdrawn_len;
 
     // Path attributes length
@@ -180,7 +198,7 @@ pub extern "C" fn parse_update_details_rust(body: *const u8, len: usize) -> *mut
 
     while offset < attr_end {
         if offset + 2 > attr_end {
-            break;
+            return std::ptr::null_mut();
         }
         let flags_byte = slice[offset];
         let atype = slice[offset + 1];
@@ -189,26 +207,60 @@ pub extern "C" fn parse_update_details_rust(body: *const u8, len: usize) -> *mut
         let alen: usize;
         if (flags_byte & 0x10) != 0 {
             if offset + 2 > attr_end {
-                break;
+                return std::ptr::null_mut();
             }
             alen = u16::from_be_bytes([slice[offset], slice[offset + 1]]) as usize;
             offset += 2;
         } else {
             if offset + 1 > attr_end {
-                break;
+                return std::ptr::null_mut();
             }
             alen = slice[offset] as usize;
             offset += 1;
         }
 
         if offset + alen > attr_end {
-            break;
+            return std::ptr::null_mut();
         }
         let abody = &slice[offset..offset + alen];
         offset += alen;
 
-        let attr_info = decode_path_attribute(flags_byte, atype, abody, &mut announce, &mut withdraw, &mut actions);
+        let attr_info = match decode_path_attribute(
+            flags_byte,
+            atype,
+            abody,
+            asn_len,
+            &mut announce,
+            &mut withdraw,
+            &mut actions,
+        ) {
+            Ok(attr) => attr,
+            Err(_) => return std::ptr::null_mut(),
+        };
         path_attributes.push(attr_info);
+    }
+
+    if !withdrawn_payload.is_empty() {
+        let routes = match parse_unicast_nlri(withdrawn_payload, AFI_IPV4, None) {
+            Ok(routes) => routes,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        withdraw.insert("ipv4-unicast".to_string(), routes);
+    }
+
+    if attr_end < slice.len() {
+        let next_hop = path_attributes.iter().find_map(|attribute| {
+            if attribute.code == ATTR_NEXT_HOP {
+                attribute.value.as_ref()?.as_str().map(str::to_string)
+            } else {
+                None
+            }
+        });
+        let routes = match parse_unicast_nlri(&slice[attr_end..], AFI_IPV4, next_hop.as_deref()) {
+            Ok(routes) => routes,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        announce.insert("ipv4-unicast".to_string(), routes);
     }
 
     let res = UpdateResult {
@@ -221,7 +273,9 @@ pub extern "C" fn parse_update_details_rust(body: *const u8, len: usize) -> *mut
 }
 
 #[no_mangle]
-pub extern "C" fn free_string(s: *mut c_char) {
+/// # Safety
+/// `s` must be null or a pointer returned by this library.
+pub unsafe extern "C" fn free_string(s: *mut c_char) {
     if !s.is_null() {
         unsafe {
             let _ = CString::from_raw(s);
@@ -268,10 +322,11 @@ fn decode_path_attribute(
     flags: u8,
     code: u8,
     data: &[u8],
+    asn_len: usize,
     announce: &mut HashMap<String, Vec<Value>>,
     withdraw: &mut HashMap<String, Vec<Value>>,
     actions: &mut Vec<String>,
-) -> PathAttribute {
+) -> Result<PathAttribute, ()> {
     let mut attr = PathAttribute {
         code,
         name: path_attr_name(code),
@@ -286,26 +341,50 @@ fn decode_path_attribute(
         raw: None,
     };
 
-    // Decode and extract MP_REACH / MP_UNREACH / EXT_COMMUNITIES for Flowspec
     if code == ATTR_MP_REACH_NLRI && data.len() > 3 {
         let afi = u16::from_be_bytes([data[0], data[1]]);
         let safi = data[2];
-        if safi == SAFI_FLOWSPEC {
-            let nh_len = data[3] as usize;
-            let nlri_start = 4 + nh_len + 1;
-            if nlri_start < data.len() {
-                let label = if afi == AFI_IPV6 { "ipv6-flowspec" } else { "ipv4-flowspec" };
+        let nh_len = data[3] as usize;
+        let nlri_start = 4 + nh_len + 1;
+        if nlri_start > data.len() {
+            return Err(());
+        }
+        if afi == AFI_IPV4 || afi == AFI_IPV6 {
+            if safi == SAFI_FLOWSPEC {
+                let label = if afi == AFI_IPV6 {
+                    "ipv6-flowspec"
+                } else {
+                    "ipv4-flowspec"
+                };
                 let routes = parse_nlri_list(&data[nlri_start..], afi);
+                announce.insert(label.to_string(), routes);
+            } else if safi == 1 {
+                let label = if afi == AFI_IPV6 {
+                    "ipv6-unicast"
+                } else {
+                    "ipv4-unicast"
+                };
+                let next_hop = format_next_hop(&data[4..4 + nh_len]);
+                let routes = parse_unicast_nlri(&data[nlri_start..], afi, Some(&next_hop))?;
                 announce.insert(label.to_string(), routes);
             }
         }
     } else if code == ATTR_MP_UNREACH_NLRI && data.len() > 2 {
         let afi = u16::from_be_bytes([data[0], data[1]]);
         let safi = data[2];
-        if safi == SAFI_FLOWSPEC {
-            let label = if afi == AFI_IPV6 { "ipv6-flowspec" } else { "ipv4-flowspec" };
-            let routes = parse_nlri_list(&data[3..], afi);
-            withdraw.insert(label.to_string(), routes);
+        if afi == AFI_IPV4 || afi == AFI_IPV6 {
+            let label = if afi == AFI_IPV6 { "ipv6" } else { "ipv4" };
+            if safi == SAFI_FLOWSPEC {
+                withdraw.insert(
+                    format!("{}-flowspec", label),
+                    parse_nlri_list(&data[3..], afi),
+                );
+            } else if safi == 1 {
+                withdraw.insert(
+                    format!("{}-unicast", label),
+                    parse_unicast_nlri(&data[3..], afi, None)?,
+                );
+            }
         }
     } else if code == ATTR_EXT_COMMUNITIES {
         actions.extend(parse_ext_communities(data));
@@ -313,18 +392,20 @@ fn decode_path_attribute(
         actions.extend(parse_ipv6_ext_communities(data));
     }
 
-    match decode_path_attribute_value(code, data) {
+    match decode_path_attribute_value(code, data, asn_len) {
         Ok(val) => attr.value = Some(val),
         Err(_) => attr.raw = Some(hex_encode(data)),
     }
 
-    attr
+    Ok(attr)
 }
 
-fn decode_path_attribute_value(code: u8, data: &[u8]) -> Result<Value, ()> {
+fn decode_path_attribute_value(code: u8, data: &[u8], asn_len: usize) -> Result<Value, ()> {
     match code {
         ATTR_ORIGIN => {
-            if data.is_empty() { return Err(()); }
+            if data.is_empty() {
+                return Err(());
+            }
             let name = match data[0] {
                 0 => "igp",
                 1 => "egp",
@@ -334,25 +415,33 @@ fn decode_path_attribute_value(code: u8, data: &[u8]) -> Result<Value, ()> {
             Ok(Value::String(name.to_string()))
         }
         ATTR_AS_PATH => {
-            let path = parse_as_path(data, 2)?;
+            let path = parse_as_path(data, asn_len)?;
             Ok(serde_json::to_value(&path).unwrap())
         }
         ATTR_NEXT_HOP => {
-            if data.len() != 4 { return Err(()); }
+            if data.len() != 4 {
+                return Err(());
+            }
             let ip = Ipv4Addr::new(data[0], data[1], data[2], data[3]);
             Ok(Value::String(ip.to_string()))
         }
         ATTR_MED | ATTR_LOCAL_PREF => {
-            if data.len() != 4 { return Err(()); }
+            if data.len() != 4 {
+                return Err(());
+            }
             let val = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
             Ok(Value::Number(val.into()))
         }
         ATTR_ATOMIC_AGGREGATE => {
-            if !data.is_empty() { return Err(()); }
+            if !data.is_empty() {
+                return Err(());
+            }
             Ok(Value::Bool(true))
         }
         ATTR_AGGREGATOR => {
-            if data.len() != 6 { return Err(()); }
+            if data.len() != 6 {
+                return Err(());
+            }
             let asn = u16::from_be_bytes([data[0], data[1]]);
             let ip = Ipv4Addr::new(data[2], data[3], data[4], data[5]);
             let mut map = serde_json::Map::new();
@@ -361,7 +450,9 @@ fn decode_path_attribute_value(code: u8, data: &[u8]) -> Result<Value, ()> {
             Ok(Value::Object(map))
         }
         ATTR_COMMUNITIES => {
-            if data.len() % 4 != 0 { return Err(()); }
+            if !data.len().is_multiple_of(4) {
+                return Err(());
+            }
             let mut comms = Vec::new();
             for chunk in data.chunks_exact(4) {
                 let val = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
@@ -381,12 +472,16 @@ fn decode_path_attribute_value(code: u8, data: &[u8]) -> Result<Value, ()> {
             Ok(Value::Array(comms))
         }
         ATTR_ORIGINATOR_ID => {
-            if data.len() != 4 { return Err(()); }
+            if data.len() != 4 {
+                return Err(());
+            }
             let ip = Ipv4Addr::new(data[0], data[1], data[2], data[3]);
             Ok(Value::String(ip.to_string()))
         }
         ATTR_CLUSTER_LIST => {
-            if data.len() % 4 != 0 { return Err(()); }
+            if !data.len().is_multiple_of(4) {
+                return Err(());
+            }
             let mut list = Vec::new();
             for chunk in data.chunks_exact(4) {
                 let ip = Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]);
@@ -395,7 +490,9 @@ fn decode_path_attribute_value(code: u8, data: &[u8]) -> Result<Value, ()> {
             Ok(Value::Array(list))
         }
         ATTR_MP_REACH_NLRI | ATTR_MP_UNREACH_NLRI => {
-            if data.len() < 3 { return Err(()); }
+            if data.len() < 3 {
+                return Err(());
+            }
             let afi = u16::from_be_bytes([data[0], data[1]]);
             let safi = data[2];
             let mut map = serde_json::Map::new();
@@ -426,7 +523,9 @@ fn decode_path_attribute_value(code: u8, data: &[u8]) -> Result<Value, ()> {
             Ok(serde_json::to_value(&path).unwrap())
         }
         ATTR_AS4_AGGREGATOR => {
-            if data.len() != 8 { return Err(()); }
+            if data.len() != 8 {
+                return Err(());
+            }
             let asn = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
             let ip = Ipv4Addr::new(data[4], data[5], data[6], data[7]);
             let mut map = serde_json::Map::new();
@@ -439,7 +538,9 @@ fn decode_path_attribute_value(code: u8, data: &[u8]) -> Result<Value, ()> {
             Ok(Value::Array(list.into_iter().map(Value::String).collect()))
         }
         ATTR_LARGE_COMMUNITIES => {
-            if data.len() % 12 != 0 { return Err(()); }
+            if !data.len().is_multiple_of(12) {
+                return Err(());
+            }
             let mut comms = Vec::new();
             for chunk in data.chunks_exact(12) {
                 let ga = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
@@ -503,24 +604,71 @@ fn format_next_hop(data: &[u8]) -> String {
         return ip.to_string();
     }
     if data.len() == 16 {
-        let ip = Ipv6Addr::from([
-            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-            data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]
-        ]);
-        return ip.to_string();
+        return Ipv6Addr::from(<[u8; 16]>::try_from(data).unwrap()).to_string();
     }
     if data.len() == 32 {
-        let ip1 = Ipv6Addr::from([
-            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-            data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]
-        ]);
-        let ip2 = Ipv6Addr::from([
-            data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23],
-            data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31]
-        ]);
+        let ip1 = Ipv6Addr::from(<[u8; 16]>::try_from(&data[..16]).unwrap());
+        let ip2 = Ipv6Addr::from(<[u8; 16]>::try_from(&data[16..]).unwrap());
         return format!("{},{}", ip1, ip2);
     }
     hex_encode(data)
+}
+
+fn parse_unicast_nlri(payload: &[u8], afi: u16, next_hop: Option<&str>) -> Result<Vec<Value>, ()> {
+    let max_bits = if afi == AFI_IPV6 {
+        128
+    } else if afi == AFI_IPV4 {
+        32
+    } else {
+        return Err(());
+    };
+    let mut routes = Vec::new();
+    let mut offset = 0;
+
+    while offset < payload.len() {
+        let prefix_len = payload[offset] as usize;
+        offset += 1;
+        if prefix_len > max_bits {
+            return Err(());
+        }
+        let byte_len = prefix_len.div_ceil(8);
+        if offset + byte_len > payload.len() {
+            return Err(());
+        }
+        let raw = &payload[offset..offset + byte_len];
+        offset += byte_len;
+
+        let prefix = if afi == AFI_IPV6 {
+            let mut address = [0u8; 16];
+            address[..byte_len].copy_from_slice(raw);
+            mask_prefix(&mut address, prefix_len);
+            format!("{}/{}", Ipv6Addr::from(address), prefix_len)
+        } else {
+            let mut address = [0u8; 4];
+            address[..byte_len].copy_from_slice(raw);
+            mask_prefix(&mut address, prefix_len);
+            format!("{}/{}", Ipv4Addr::from(address), prefix_len)
+        };
+
+        let mut route = serde_json::Map::new();
+        route.insert("prefix".to_string(), Value::String(prefix));
+        if let Some(next_hop) = next_hop {
+            route.insert("next_hop".to_string(), Value::String(next_hop.to_string()));
+        }
+        routes.push(Value::Object(route));
+    }
+
+    Ok(routes)
+}
+
+fn mask_prefix(address: &mut [u8], prefix_len: usize) {
+    let full_bytes = prefix_len / 8;
+    let remaining_bits = prefix_len % 8;
+    if remaining_bits != 0 && full_bytes < address.len() {
+        address[full_bytes] &= 0xff << (8 - remaining_bits);
+    }
+    let zero_from = full_bytes + usize::from(remaining_bits != 0);
+    address[zero_from..].fill(0);
 }
 
 // ── Flowspec NLRI Parser ───────────────────────────────────────────────────
@@ -536,7 +684,9 @@ fn parse_nlri_list(payload: &[u8], afi: u16) -> Vec<Value> {
             nlri_len = first as usize;
             offset += 1;
         } else {
-            if offset + 2 > payload.len() { break; }
+            if offset + 2 > payload.len() {
+                break;
+            }
             nlri_len = (((first & 0x0F) as usize) << 8) | payload[offset + 1] as usize;
             offset += 2;
         }
@@ -562,39 +712,58 @@ fn parse_nlri_components(data: &[u8], afi: u16) -> HashMap<String, Value> {
         offset += 1;
         let name = component_name(ftype, afi);
 
-        if ftype == 1 || ftype == 2 { // Prefix components
+        if ftype == 1 || ftype == 2 {
+            // Prefix components
             if let Ok((prefix, new_offset)) = parse_prefix(data, offset, afi) {
                 components.insert(name, Value::String(prefix));
                 offset = new_offset;
             } else {
                 break;
             }
-        } else if ftype == 9 || ftype == 12 { // Bitmask components
+        } else if ftype == 9 || ftype == 12 {
+            // Bitmask components
             let mut values = Vec::new();
             loop {
-                if offset >= data.len() { break; }
+                if offset >= data.len() {
+                    break;
+                }
                 let op = data[offset];
                 offset += 1;
                 let (end, length, opname) = decode_bitmask_op(op);
-                if offset + length > data.len() { break; }
+                if offset + length > data.len() {
+                    break;
+                }
                 let value = read_be_int(&data[offset..offset + length]);
                 offset += length;
                 values.push(Value::String(format_bitmask_value(ftype, &opname, value)));
-                if end { break; }
+                if end {
+                    break;
+                }
             }
             components.insert(name, Value::Array(values));
-        } else { // Numeric components
+        } else {
+            // Numeric components
             let mut values = Vec::new();
             loop {
-                if offset >= data.len() { break; }
+                if offset >= data.len() {
+                    break;
+                }
                 let op = data[offset];
                 offset += 1;
                 let (end, length, sym) = decode_op(op);
-                if offset + length > data.len() { break; }
+                if offset + length > data.len() {
+                    break;
+                }
                 let value = read_be_int(&data[offset..offset + length]);
                 offset += length;
-                values.push(Value::String(format!("{}{}", sym, format_numeric_value(ftype, value))));
-                if end { break; }
+                values.push(Value::String(format!(
+                    "{}{}",
+                    sym,
+                    format_numeric_value(ftype, value)
+                )));
+                if end {
+                    break;
+                }
             }
             components.insert(name, Value::Array(values));
         }
@@ -625,11 +794,15 @@ fn component_name(ftype: u8, afi: u16) -> String {
 }
 
 fn parse_prefix(data: &[u8], mut offset: usize, afi: u16) -> Result<(String, usize), ()> {
-    if offset >= data.len() { return Err(()); }
+    if offset >= data.len() {
+        return Err(());
+    }
     let prefix_len = data[offset] as usize;
     offset += 1;
-    let num_bytes = (prefix_len + 7) / 8;
-    if offset + num_bytes > data.len() { return Err(()); }
+    let num_bytes = prefix_len.div_ceil(8);
+    if offset + num_bytes > data.len() {
+        return Err(());
+    }
     let raw = &data[offset..offset + num_bytes];
     offset += num_bytes;
 
@@ -658,10 +831,18 @@ fn decode_op(op: u8) -> (bool, usize, String) {
     let eq = (op & 0x01) != 0;
 
     let mut sym = String::new();
-    if lt { sym.push('<'); }
-    if gt { sym.push('>'); }
-    if eq { sym.push('='); }
-    if sym.is_empty() { sym.push('?'); }
+    if lt {
+        sym.push('<');
+    }
+    if gt {
+        sym.push('>');
+    }
+    if eq {
+        sym.push('=');
+    }
+    if sym.is_empty() {
+        sym.push('?');
+    }
 
     (end_of_list, length, sym)
 }
@@ -673,9 +854,17 @@ fn decode_bitmask_op(op: u8) -> (bool, usize, String) {
     let match_all = (op & 0x01) != 0;
 
     let opname = if match_all {
-        if negated { "not-all" } else { "all" }
+        if negated {
+            "not-all"
+        } else {
+            "all"
+        }
     } else {
-        if negated { "none" } else { "any" }
+        if negated {
+            "none"
+        } else {
+            "any"
+        }
     };
     (end_of_list, length, opname.to_string())
 }
@@ -773,14 +962,25 @@ fn parse_ext_communities(data: &[u8]) -> Vec<String> {
 
         if (t, s) == (0x80, 0x06) {
             let rate = read_f32(&chunk[4..8]);
-            actions.push(if rate == 0.0 { "discard".to_string() } else { format!("rate-limit={:.0}bps", rate) });
+            actions.push(if rate == 0.0 {
+                "discard".to_string()
+            } else {
+                format!("rate-limit={:.0}bps", rate)
+            });
         } else if (t, s) == (0x80, 0x0C) {
             let rate = read_f32(&chunk[4..8]);
-            actions.push(if rate == 0.0 { "discard-packets".to_string() } else { format!("rate-limit={:.0}pps", rate) });
+            actions.push(if rate == 0.0 {
+                "discard-packets".to_string()
+            } else {
+                format!("rate-limit={:.0}pps", rate)
+            });
         } else if (t, s) == (0x80, 0x07) {
             let sample = (chunk[7] & 0x02) != 0;
             let terminal = (chunk[7] & 0x01) != 0;
-            actions.push(format!("traffic-action(sample={},terminal={})", sample, terminal));
+            actions.push(format!(
+                "traffic-action(sample={},terminal={})",
+                sample, terminal
+            ));
         } else if (t, s) == (0x80, 0x08) {
             let asn = u16::from_be_bytes([chunk[2], chunk[3]]);
             let val = u32::from_be_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
@@ -816,7 +1016,7 @@ fn parse_ipv6_ext_communities(data: &[u8]) -> Vec<String> {
         let etype = u16::from_be_bytes([chunk[0], chunk[1]]);
         let ip = Ipv6Addr::from([
             chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7], chunk[8], chunk[9],
-            chunk[10], chunk[11], chunk[12], chunk[13], chunk[14], chunk[15], chunk[16], chunk[17]
+            chunk[10], chunk[11], chunk[12], chunk[13], chunk[14], chunk[15], chunk[16], chunk[17],
         ]);
         let val = u16::from_be_bytes([chunk[18], chunk[19]]);
 
@@ -836,7 +1036,11 @@ fn parse_ipv6_ext_communities(data: &[u8]) -> Vec<String> {
 }
 
 fn redirect_to_ip_action(family: &str, addr: &str, flags: u16) -> String {
-    let verb = if (flags & 0x0001) != 0 { "copy-to" } else { "redirect-to" };
+    let verb = if (flags & 0x0001) != 0 {
+        "copy-to"
+    } else {
+        "redirect-to"
+    };
     let extra = if flags == 0 || flags == 1 {
         "".to_string()
     } else {
@@ -856,4 +1060,32 @@ fn read_f32(bytes: &[u8]) -> f32 {
 
 fn hex_encode(data: &[u8]) -> String {
     data.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_ipv4_unicast_prefix_and_next_hop() {
+        let routes =
+            parse_unicast_nlri(&[25, 203, 0, 113, 255], AFI_IPV4, Some("192.0.2.1")).unwrap();
+
+        assert_eq!(routes[0]["prefix"], "203.0.113.128/25");
+        assert_eq!(routes[0]["next_hop"], "192.0.2.1");
+    }
+
+    #[test]
+    fn parses_ipv6_unicast_prefix() {
+        let routes =
+            parse_unicast_nlri(&[48, 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x01], AFI_IPV6, None).unwrap();
+
+        assert_eq!(routes[0]["prefix"], "2001:db8:1::/48");
+        assert!(routes[0].get("next_hop").is_none());
+    }
+
+    #[test]
+    fn rejects_truncated_unicast_prefix() {
+        assert!(parse_unicast_nlri(&[24, 203, 0], AFI_IPV4, None).is_err());
+    }
 }

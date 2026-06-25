@@ -121,7 +121,7 @@ async def _sse(req: web.Request) -> web.StreamResponse:
         "level":   "info",
         "message": "snapshot",
         "status":  {**manager.status(), "capture_running": req.app["capture"].running},
-        "routes":  rib.to_dict()["routes"],
+        "routes": rib.to_dict()["routes"],
     }
     await _write_sse(resp, snapshot)
 

@@ -1,4 +1,4 @@
-"""In-memory Flowspec RIB with optional JSON file persistence."""
+"""In-memory Unicast and FlowSpec RIB with optional JSON persistence."""
 
 import hashlib
 import json
@@ -12,9 +12,13 @@ from bgpx.message.flowspec import normalize_nlri_components
 log = logging.getLogger(__name__)
 
 
-def _route_id(components: dict) -> str:
-    """Deterministic 12-char ID derived from a route's match components."""
-    canonical = json.dumps(components, sort_keys=True, separators=(",", ":"))
+def _route_id(family: str, afi: str, peer: str, route: dict) -> str:
+    """Deterministic ID scoped by family, AFI and peer."""
+    canonical = json.dumps(
+        [family, afi, peer, route],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return hashlib.sha1(canonical.encode()).hexdigest()[:12]
 
 
@@ -26,7 +30,7 @@ class FlowspecRIB:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def add(
+    def add_flowspec(
         self,
         afi: str,
         components: dict,
@@ -35,9 +39,10 @@ class FlowspecRIB:
         path_attributes: Optional[list[dict]] = None,
     ) -> str:
         components = normalize_nlri_components(components)
-        route_id = _route_id(components)
+        route_id = _route_id("flowspec", afi, peer, components)
         entry = {
             "id":          route_id,
+            "family":      "flowspec",
             "afi":         afi,
             "peer":        peer,
             "received_at": datetime.now(timezone.utc).isoformat(),
@@ -54,16 +59,44 @@ class FlowspecRIB:
         self._persist()
         return route_id
 
-    def remove(self, components: dict) -> Optional[str]:
-        """Remove a route and return its id, or None if it was not present."""
+    def remove_flowspec(self, afi: str, components: dict, peer: str) -> Optional[str]:
         components = normalize_nlri_components(components)
-        route_id = _route_id(components)
-        removed = self._routes.pop(route_id, None)
-        if removed:
-            log.info(f"RIB DEL id={route_id} match={components}")
-            self._persist()
-            return route_id
-        return None
+        route_id = _route_id("flowspec", afi, peer, components)
+        return self._remove_id(route_id)
+
+    def add_unicast(
+        self,
+        afi: str,
+        prefix: str,
+        peer: str,
+        next_hop: str = "",
+        as_path: Optional[list[int]] = None,
+        communities: Optional[list[str]] = None,
+        path_attributes: Optional[list[dict]] = None,
+    ) -> str:
+        route_id = _route_id("unicast", afi, peer, {"prefix": prefix})
+        entry = {
+            "id": route_id,
+            "family": "unicast",
+            "afi": afi,
+            "peer": peer,
+            "received_at": datetime.now(timezone.utc).isoformat(),
+            "prefix": prefix,
+            "next_hop": next_hop,
+            "as_path": as_path or [],
+            "communities": communities or [],
+        }
+        if path_attributes is not None:
+            entry["path_attributes"] = path_attributes
+        self._routes[route_id] = entry
+        log.info(f"RIB ADD [{afi}] id={route_id} peer={peer} prefix={prefix}")
+        self._persist()
+        return route_id
+
+    def remove_unicast(self, afi: str, prefix: str, peer: str) -> Optional[str]:
+        return self._remove_id(
+            _route_id("unicast", afi, peer, {"prefix": prefix})
+        )
 
     def clear_peer(self, peer: str) -> int:
         keys = [k for k, v in self._routes.items() if v["peer"] == peer]
@@ -107,8 +140,17 @@ class FlowspecRIB:
 
     def _normalized_route(self, route: dict) -> dict:
         normalized = dict(route)
-        normalized["match"] = normalize_nlri_components(route.get("match", {}))
+        if route.get("family") == "flowspec" or "match" in route:
+            normalized["match"] = normalize_nlri_components(route.get("match", {}))
         return normalized
+
+    def _remove_id(self, route_id: str) -> Optional[str]:
+        removed = self._routes.pop(route_id, None)
+        if not removed:
+            return None
+        log.info(f"RIB DEL id={route_id}")
+        self._persist()
+        return route_id
 
     def _persist(self):
         if not self._json_output:

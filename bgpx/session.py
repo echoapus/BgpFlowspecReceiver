@@ -319,6 +319,10 @@ class BGPSession:
     async def _dispatch(self, msg_type: int, body: bytes, writer: asyncio.StreamWriter):
         if msg_type == MSG_OPEN:
             info = parse_open(body)
+            if info["peer_as"] != self.config.peer_as:
+                raise ConnectionError(
+                    f"Peer ASN mismatch: expected {self.config.peer_as}, got {info['peer_as']}"
+                )
             self._peer_info = info
             self._hold_time = min(self.config.hold_time, info["hold_time"])
             log.info(
@@ -347,33 +351,77 @@ class BGPSession:
         elif msg_type == MSG_UPDATE:
             if self._state != ESTABLISHED:
                 return
-            update = parse_update_details(body)
+            update = parse_update_details(
+                body,
+                asn_len=4 if self._peer_info.get("supports_4byte_asn") else 2,
+            )
             announce = update["announce"]
             withdraw = update["withdraw"]
             actions = update["actions"]
             path_attributes = update["path_attributes"]
             for afi, routes in announce.items():
                 for route in routes:
-                    route_id = self.rib.add(
-                        afi, route, actions, self.config.peer_ip,
-                        path_attributes=path_attributes,
-                    )
+                    if afi.endswith("-unicast"):
+                        as_path, communities = _unicast_attributes(path_attributes)
+                        route_id = self.rib.add_unicast(
+                            afi=afi,
+                            prefix=route["prefix"],
+                            peer=self.config.peer_ip,
+                            next_hop=route.get("next_hop", ""),
+                            as_path=as_path,
+                            communities=communities,
+                            path_attributes=path_attributes,
+                        )
+                        extra = {
+                            "family": "unicast",
+                            "prefix": route["prefix"],
+                            "next_hop": route.get("next_hop", ""),
+                            "as_path": as_path,
+                            "communities": communities,
+                        }
+                    else:
+                        route_id = self.rib.add_flowspec(
+                            afi, route, actions, self.config.peer_ip,
+                            path_attributes=path_attributes,
+                        )
+                        extra = {
+                            "family": "flowspec",
+                            "match": route,
+                            "actions": actions,
+                        }
                     self._emit(
                         "announce", f"ANNOUNCE {afi}",
                         level="update",
-                        afi=afi, route_id=route_id, match=route, actions=actions,
+                        afi=afi, route_id=route_id,
                         path_attributes=path_attributes,
                         peer=self.config.peer_ip,
+                        **extra,
                     )
             for afi, routes in withdraw.items():
                 for route in routes:
-                    route_id = self.rib.remove(route)
+                    if afi.endswith("-unicast"):
+                        route_id = self.rib.remove_unicast(
+                            afi, route["prefix"], self.config.peer_ip
+                        )
+                        extra = {
+                            "family": "unicast",
+                            "prefix": route["prefix"],
+                        }
+                    else:
+                        route_id = self.rib.remove_flowspec(
+                            afi, route, self.config.peer_ip
+                        )
+                        extra = {
+                            "family": "flowspec",
+                            "match": route,
+                        }
                     self._emit(
                         "withdraw", f"WITHDRAW {afi}",
                         level="update",
-                        afi=afi, route_id=route_id, match=route,
+                        afi=afi, route_id=route_id,
                         path_attributes=path_attributes,
                         peer=self.config.peer_ip,
+                        **extra,
                     )
 
         elif msg_type == MSG_NOTIFICATION:
@@ -478,3 +526,29 @@ class BGPSession:
             await writer.wait_closed()
         except Exception:
             pass
+
+
+def _unicast_attributes(path_attributes: list[dict]) -> tuple[list[int], list[str]]:
+    as_path: list[int] = []
+    as4_path: list[int] = []
+    communities: list[str] = []
+
+    for attribute in path_attributes:
+        value = attribute.get("value")
+        if attribute["name"] in ("AS_PATH", "AS4_PATH") and isinstance(value, list):
+            flattened = [
+                asn
+                for segment in value
+                for asn in segment.get("asns", [])
+            ]
+            if attribute["name"] == "AS4_PATH":
+                as4_path = flattened
+            else:
+                as_path = flattened
+        elif attribute["name"] in ("COMMUNITIES", "LARGE_COMMUNITIES"):
+            if isinstance(value, list):
+                communities.extend(value)
+
+    if as4_path:
+        as_path = as_path[:-len(as4_path)] + as4_path
+    return as_path, communities

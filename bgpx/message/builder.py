@@ -24,6 +24,8 @@ def build_open(local_as: int, hold_time: int, router_id: str) -> bytes:
     """Build a BGP OPEN message advertising IPv4 + IPv6 flowspec capabilities."""
     my_as = local_as if local_as <= 0xFFFF else AS_TRANS
     caps = (
+        _capability(CAP_MPBGP, struct.pack("!HBB", AFI_IPV4, 0, 1)) +
+        _capability(CAP_MPBGP, struct.pack("!HBB", AFI_IPV6, 0, 1)) +
         _capability(CAP_MPBGP, struct.pack("!HBB", AFI_IPV4, 0, SAFI_FLOWSPEC)) +
         _capability(CAP_MPBGP, struct.pack("!HBB", AFI_IPV6, 0, SAFI_FLOWSPEC)) +
         _capability(CAP_4BYTE_ASN, struct.pack("!I", local_as))
