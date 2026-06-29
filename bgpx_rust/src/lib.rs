@@ -962,14 +962,14 @@ fn parse_ext_communities(data: &[u8]) -> Vec<String> {
 
         if (t, s) == (0x80, 0x06) {
             let rate = read_f32(&chunk[4..8]);
-            actions.push(if rate == 0.0 {
+            actions.push(if rate <= 0.0 {
                 "discard".to_string()
             } else {
-                format!("rate-limit={:.0}bps", rate)
+                format!("rate-limit={:.0}bps", rate * 8.0)
             });
         } else if (t, s) == (0x80, 0x0C) {
             let rate = read_f32(&chunk[4..8]);
-            actions.push(if rate == 0.0 {
+            actions.push(if rate <= 0.0 {
                 "discard-packets".to_string()
             } else {
                 format!("rate-limit={:.0}pps", rate)
@@ -1087,5 +1087,32 @@ mod tests {
     #[test]
     fn rejects_truncated_unicast_prefix() {
         assert!(parse_unicast_nlri(&[24, 203, 0], AFI_IPV4, None).is_err());
+    }
+
+    #[test]
+    fn traffic_rate_bytes_is_rendered_as_bits_per_second() {
+        let mut ec = vec![0x80, 0x06, 0x00, 0x00];
+        ec.extend_from_slice(&9600.0f32.to_be_bytes());
+
+        assert_eq!(parse_ext_communities(&ec), vec!["rate-limit=76800bps"]);
+    }
+
+    #[test]
+    fn traffic_rate_packets_stays_packets_per_second() {
+        let mut ec = vec![0x80, 0x0c, 0x00, 0x00];
+        ec.extend_from_slice(&9600.0f32.to_be_bytes());
+
+        assert_eq!(parse_ext_communities(&ec), vec!["rate-limit=9600pps"]);
+    }
+
+    #[test]
+    fn non_positive_traffic_rates_are_discard() {
+        let mut bytes_ec = vec![0x80, 0x06, 0x00, 0x00];
+        bytes_ec.extend_from_slice(&(-1.0f32).to_be_bytes());
+        let mut packets_ec = vec![0x80, 0x0c, 0x00, 0x00];
+        packets_ec.extend_from_slice(&(-1.0f32).to_be_bytes());
+
+        assert_eq!(parse_ext_communities(&bytes_ec), vec!["discard"]);
+        assert_eq!(parse_ext_communities(&packets_ec), vec!["discard-packets"]);
     }
 }

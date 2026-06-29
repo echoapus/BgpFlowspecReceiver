@@ -130,6 +130,11 @@ def test_discard_action():
     assert parse_ext_communities(ec) == ["discard"]
 
 
+def test_negative_rate_limit_action_is_discard():
+    ec = bytes([0x80, 0x06, 0x00, 0x00]) + struct.pack("!f", -1.0)
+    assert parse_ext_communities(ec) == ["discard"]
+
+
 def test_rate_limit_action():
     ec = bytes([0x80, 0x06, 0x00, 0x00]) + struct.pack("!f", 9600.0)
     assert parse_ext_communities(ec) == ["rate-limit=76800bps"]
@@ -138,6 +143,11 @@ def test_rate_limit_action():
 def test_packet_rate_limit_action_stays_packets_per_second():
     ec = bytes([0x80, 0x0C, 0x00, 0x00]) + struct.pack("!f", 9600.0)
     assert parse_ext_communities(ec) == ["rate-limit=9600pps"]
+
+
+def test_negative_packet_rate_limit_action_is_discard_packets():
+    ec = bytes([0x80, 0x0C, 0x00, 0x00]) + struct.pack("!f", -1.0)
+    assert parse_ext_communities(ec) == ["discard-packets"]
 
 
 def test_traffic_action():

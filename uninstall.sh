@@ -4,7 +4,8 @@ set -Eeuo pipefail
 APP_NAME="bgpx"
 INSTALL_DIR="${INSTALL_DIR:-/opt/bgpx}"
 BIN_LINK="/usr/local/bin/${APP_NAME}"
-SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
+SERVICE_NAME="${APP_NAME}.service"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
 FORCE=0
 KEEP_DATA=0
 
@@ -41,6 +42,15 @@ confirm() {
   fi
 }
 
+require_safe_install_dir() {
+  case "${INSTALL_DIR}" in
+    ""|"/"|"/opt"|"/usr"|"/var"|"/home")
+      echo "Refusing unsafe install dir: ${INSTALL_DIR:-<empty>}" >&2
+      exit 1
+      ;;
+  esac
+}
+
 remove_service() {
   if [[ ! -f "${SERVICE_FILE}" ]]; then
     echo "Systemd unit:      not found"
@@ -48,23 +58,27 @@ remove_service() {
   fi
 
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl stop "${APP_NAME}.service" >/dev/null 2>&1 || true
-    systemctl disable "${APP_NAME}.service" >/dev/null 2>&1 || true
+    systemctl stop "${SERVICE_NAME}" >/dev/null 2>&1 || true
+    systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
   fi
 
   rm -f "${SERVICE_FILE}"
 
   if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload >/dev/null 2>&1 || true
-    systemctl reset-failed "${APP_NAME}.service" >/dev/null 2>&1 || true
+    systemctl reset-failed "${SERVICE_NAME}" >/dev/null 2>&1 || true
   fi
 
   echo "Systemd unit:      removed ${SERVICE_FILE}"
 }
 
 remove_bin_link() {
-  if [[ ! -L "${BIN_LINK}" ]]; then
+  if [[ ! -e "${BIN_LINK}" ]]; then
     echo "Command link:      not found"
+    return
+  fi
+  if [[ ! -L "${BIN_LINK}" ]]; then
+    echo "Command link:      kept ${BIN_LINK} (not a symlink)"
     return
   fi
 
@@ -106,6 +120,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+require_safe_install_dir
 
 if [[ "${EUID}" -ne 0 && ( -f "${SERVICE_FILE}" || "${INSTALL_DIR}" == /opt* || -e "${BIN_LINK}" ) ]]; then
   echo "Uninstalling system paths requires root. Re-run with sudo or choose --install-dir." >&2

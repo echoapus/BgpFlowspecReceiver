@@ -7,7 +7,8 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 WEB_PORT="${WEB_PORT:-}"
 CREATE_SERVICE=""
 SET_BIND_CAP=0
-SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
+SERVICE_NAME="${APP_NAME}.service"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
 USE_RUST=""
 
 usage() {
@@ -34,6 +35,15 @@ EOF
 
 is_valid_port() {
   [[ "$1" =~ ^[0-9]+$ ]] && [[ "$1" -ge 1 ]] && [[ "$1" -le 65535 ]]
+}
+
+require_safe_install_dir() {
+  case "${INSTALL_DIR}" in
+    ""|"/"|"/opt"|"/usr"|"/var"|"/home")
+      echo "Refusing unsafe install dir: ${INSTALL_DIR:-<empty>}" >&2
+      exit 1
+      ;;
+  esac
 }
 
 prompt_web_port() {
@@ -101,6 +111,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+require_safe_install_dir
+
 if [[ "${EUID}" -ne 0 && "${INSTALL_DIR}" == /opt* ]]; then
   echo "Installing to ${INSTALL_DIR} requires root. Re-run with sudo or choose --install-dir." >&2
   exit 1
@@ -124,6 +136,10 @@ prompt_service() {
 
 prompt_web_port
 prompt_service
+if [[ "${CREATE_SERVICE}" -eq 1 ]] && ! command -v systemctl >/dev/null 2>&1; then
+  echo "--service requires systemctl" >&2
+  exit 1
+fi
 
 prompt_rust() {
   [[ -n "${USE_RUST}" ]] && return
@@ -203,7 +219,7 @@ tar \
 
 "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 "${VENV_DIR}/bin/python" -m pip install --upgrade pip
-"${VENV_DIR}/bin/pip" install "${APP_DIR}"
+"${VENV_DIR}/bin/python" -m pip install "${APP_DIR}"
 
 MESSAGE_DIR=$("${VENV_DIR}/bin/python" -I -c \
   "import bgpx.message, pathlib; print(pathlib.Path(bgpx.message.__file__).parent)")
@@ -282,7 +298,7 @@ WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
-  systemctl enable --now "${APP_NAME}.service"
+  systemctl enable --now "${SERVICE_NAME}"
   echo "Installed and started systemd service: ${SERVICE_FILE}"
 fi
 
@@ -315,8 +331,11 @@ if [[ "${CREATE_SERVICE}" -eq 1 ]]; then
   echo "Systemd unit:      ${SERVICE_FILE}"
   echo
   echo "Next commands:"
-  echo "  sudo systemctl status ${APP_NAME}"
-  echo "  sudo journalctl -u ${APP_NAME} -f"
+  echo "  sudo systemctl status ${SERVICE_NAME}"
+  echo "  sudo journalctl -u ${SERVICE_NAME} -f"
+  echo
+  echo "Service status:"
+  systemctl --no-pager --full --lines=20 status "${SERVICE_NAME}" || true
 else
   echo "Systemd unit:      not installed"
   echo

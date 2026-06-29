@@ -235,12 +235,12 @@ def parse_ext_communities(data: bytes) -> list[str]:
 
         if (t, s) == EC_TRAFFIC_RATE_BYTES:
             rate = struct.unpack("!f", ec[4:8])[0]
-            actions.append("discard" if rate == 0.0 else f"rate-limit={rate * 8:.0f}bps")
+            actions.append("discard" if rate <= 0.0 else f"rate-limit={rate * 8:.0f}bps")
 
         elif (t, s) == EC_TRAFFIC_RATE_PACKETS:
             rate = struct.unpack("!f", ec[4:8])[0]
             actions.append(
-                "discard-packets" if rate == 0.0 else f"rate-limit={rate:.0f}pps"
+                "discard-packets" if rate <= 0.0 else f"rate-limit={rate:.0f}pps"
             )
 
         elif (t, s) == EC_TRAFFIC_ACTION:
