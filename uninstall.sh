@@ -43,6 +43,7 @@ confirm() {
 }
 
 require_safe_install_dir() {
+  INSTALL_DIR="${INSTALL_DIR%/}"
   case "${INSTALL_DIR}" in
     ""|"/"|"/opt"|"/usr"|"/var"|"/home")
       echo "Refusing unsafe install dir: ${INSTALL_DIR:-<empty>}" >&2
@@ -73,7 +74,7 @@ remove_service() {
 }
 
 remove_bin_link() {
-  if [[ ! -e "${BIN_LINK}" ]]; then
+  if [[ ! -e "${BIN_LINK}" && ! -L "${BIN_LINK}" ]]; then
     echo "Command link:      not found"
     return
   fi
@@ -123,7 +124,7 @@ done
 
 require_safe_install_dir
 
-if [[ "${EUID}" -ne 0 && ( -f "${SERVICE_FILE}" || "${INSTALL_DIR}" == /opt* || -e "${BIN_LINK}" ) ]]; then
+if [[ "${EUID}" -ne 0 && ( -f "${SERVICE_FILE}" || "${INSTALL_DIR}" == /opt* || -e "${BIN_LINK}" || -L "${BIN_LINK}" ) ]]; then
   echo "Uninstalling system paths requires root. Re-run with sudo or choose --install-dir." >&2
   exit 1
 fi

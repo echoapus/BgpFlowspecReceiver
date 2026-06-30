@@ -38,6 +38,7 @@ is_valid_port() {
 }
 
 require_safe_install_dir() {
+  INSTALL_DIR="${INSTALL_DIR%/}"
   case "${INSTALL_DIR}" in
     ""|"/"|"/opt"|"/usr"|"/var"|"/home")
       echo "Refusing unsafe install dir: ${INSTALL_DIR:-<empty>}" >&2
@@ -195,6 +196,7 @@ BIN_LINK="/usr/local/bin/${APP_NAME}"
 echo "Installing ${APP_NAME} from ${SRC_DIR} to ${INSTALL_DIR}"
 echo "Web UI will bind to 0.0.0.0:${WEB_PORT}"
 
+rm -rf "${APP_DIR}"
 install -d "${APP_DIR}"
 
 tar \
@@ -224,7 +226,7 @@ tar \
 
 if [[ "${USE_RUST}" -eq 1 ]]; then
   "${VENV_DIR}/bin/python" -m pip install --quiet maturin
-  "${VENV_DIR}/bin/python" -m maturin build --release \
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 "${VENV_DIR}/bin/python" -m maturin build --release \
     --manifest-path "${RUST_BUILD_DIR}/Cargo.toml" \
     --interpreter "${VENV_DIR}/bin/python" \
     --out "${RUST_BUILD_DIR}/wheels"
@@ -292,8 +294,9 @@ WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
-  systemctl enable --now "${SERVICE_NAME}"
-  echo "Installed and started systemd service: ${SERVICE_FILE}"
+  systemctl enable "${SERVICE_NAME}"
+  systemctl restart "${SERVICE_NAME}"
+  echo "Installed and restarted systemd service: ${SERVICE_FILE}"
 fi
 
 echo
