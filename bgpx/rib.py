@@ -8,7 +8,6 @@ import os
 from collections import Counter
 from datetime import datetime, timezone
 from itertools import islice
-from typing import Optional
 
 from bgpx.message.flowspec import normalize_nlri_components
 
@@ -27,10 +26,10 @@ def _route_id(family: str, afi: str, peer: str, route: dict) -> str:
 
 # ponytail: threading.Lock removed because bgpx is purely single-threaded asyncio
 class FlowspecRIB:
-    def __init__(self, json_output: Optional[str] = None):
+    def __init__(self, json_output: str | None = None):
         self._routes: dict[str, dict] = {}
         self._json_output = json_output
-        self._persist_handle: Optional[asyncio.TimerHandle] = None
+        self._persist_handle: asyncio.TimerHandle | None = None
         self._counts = Counter()
         self._analytics = {
             name: Counter()
@@ -49,7 +48,7 @@ class FlowspecRIB:
         components: dict,
         actions: list,
         peer: str,
-        path_attributes: Optional[list[dict]] = None,
+        path_attributes: list[dict] | None = None,
     ) -> str:
         components = normalize_nlri_components(components)
         route_id = _route_id("flowspec", afi, peer, components)
@@ -77,7 +76,7 @@ class FlowspecRIB:
         self._changed()
         return route_id
 
-    def remove_flowspec(self, afi: str, components: dict, peer: str) -> Optional[str]:
+    def remove_flowspec(self, afi: str, components: dict, peer: str) -> str | None:
         components = normalize_nlri_components(components)
         route_id = _route_id("flowspec", afi, peer, components)
         return self._remove_id(route_id)
@@ -88,9 +87,9 @@ class FlowspecRIB:
         prefix: str,
         peer: str,
         next_hop: str = "",
-        as_path: Optional[list[int]] = None,
-        communities: Optional[list[str]] = None,
-        path_attributes: Optional[list[dict]] = None,
+        as_path: list[int] | None = None,
+        communities: list[str] | None = None,
+        path_attributes: list[dict] | None = None,
     ) -> str:
         route_id = _route_id("unicast", afi, peer, {"prefix": prefix})
         entry = {
@@ -116,7 +115,7 @@ class FlowspecRIB:
         self._changed()
         return route_id
 
-    def remove_unicast(self, afi: str, prefix: str, peer: str) -> Optional[str]:
+    def remove_unicast(self, afi: str, prefix: str, peer: str) -> str | None:
         return self._remove_id(
             _route_id("unicast", afi, peer, {"prefix": prefix})
         )
@@ -140,7 +139,7 @@ class FlowspecRIB:
             if r["afi"] == afi
         ]
 
-    def get(self, route_id: str) -> Optional[dict]:
+    def get(self, route_id: str) -> dict | None:
         route = self._routes.get(route_id)
         return self._normalized_route(route) if route else None
 
@@ -155,7 +154,7 @@ class FlowspecRIB:
             self._changed()
         return count
 
-    def set_json_output(self, path: Optional[str]) -> None:
+    def set_json_output(self, path: str | None) -> None:
         self._json_output = path
 
     def to_dict(self) -> dict:
@@ -238,7 +237,7 @@ class FlowspecRIB:
             normalized["match"] = normalize_nlri_components(route.get("match", {}))
         return normalized
 
-    def _remove_id(self, route_id: str) -> Optional[str]:
+    def _remove_id(self, route_id: str) -> str | None:
         removed = self._routes.pop(route_id, None)
         if not removed:
             return None

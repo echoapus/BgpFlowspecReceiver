@@ -5,7 +5,6 @@ import ipaddress
 import logging
 import re
 import shutil
-from typing import Optional
 
 from bgpx.events import EventBus
 
@@ -38,8 +37,8 @@ _HEX_RE = re.compile(r"^\s+0x([0-9a-f]+):\s+(.+)$")
 class PacketCapture:
     def __init__(self, events: EventBus):
         self._events = events
-        self._proc:  Optional[asyncio.subprocess.Process] = None
-        self._task:  Optional[asyncio.Task] = None
+        self._proc:  asyncio.subprocess.Process | None = None
+        self._task:  asyncio.Task | None = None
         self.running = False
 
     # ── Public ────────────────────────────────────────────────────────────────
@@ -189,7 +188,7 @@ class PacketCapture:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _detect_bgp_type(raw: list[int]) -> Optional[str]:
+def _detect_bgp_type(raw: list[int]) -> str | None:
     """
     BGP header: 16 bytes marker (0xFF) + 2 bytes length + 1 byte type.
     In a TCP stream the BGP header starts at byte 0 of the payload.
@@ -205,9 +204,9 @@ def _detect_bgp_type(raw: list[int]) -> Optional[str]:
     return None
 
 
-def _tcp_event(flags: str) -> Optional[str]:
-    if flags in ("S",):     return "TCP SYN — connection attempt"
-    if flags in ("S.",):    return "TCP SYN-ACK — connection accepted"
+def _tcp_event(flags: str) -> str | None:
+    if flags == "S":     return "TCP SYN — connection attempt"
+    if flags == "S.":    return "TCP SYN-ACK — connection accepted"
     if flags in ("R", "R."): return "TCP RST — connection refused/reset"
     if flags in ("F", "F."): return "TCP FIN — connection closing"
     return None

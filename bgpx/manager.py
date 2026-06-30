@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from typing import Optional
 
 from bgpx.events import EventBus
 from bgpx.rib import FlowspecRIB
@@ -15,9 +14,9 @@ class SessionManager:
     def __init__(self, events: EventBus, rib: FlowspecRIB):
         self._events  = events
         self._rib     = rib
-        self._session: Optional[BGPSession] = None
-        self._task:    Optional[asyncio.Task]  = None
-        self._config:  Optional[SessionConfig] = None
+        self._session: BGPSession | None = None
+        self._task:    asyncio.Task | None  = None
+        self._config:  SessionConfig | None = None
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -63,7 +62,7 @@ class SessionManager:
         log.info("Session stopped")
 
     @property
-    def session(self) -> Optional[BGPSession]:
+    def session(self) -> BGPSession | None:
         return self._session
 
     @property
@@ -71,7 +70,7 @@ class SessionManager:
         return self._task is not None and not self._task.done()
 
     @property
-    def config(self) -> Optional[SessionConfig]:
+    def config(self) -> SessionConfig | None:
         return self._config
 
     def status(self) -> dict:

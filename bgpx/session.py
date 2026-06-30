@@ -3,7 +3,6 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from bgpx.constants import (
     BGP_HEADER_LEN,
@@ -35,7 +34,7 @@ class SessionConfig:
     connect_timeout: float         = 5.0
     active_retry_delay: float      = 1.0
     listen_port:     int           = 179
-    json_output:     Optional[str] = None
+    json_output:     str | None = None
 
 
 @dataclass
@@ -51,7 +50,7 @@ class BGPSession:
         self,
         config: SessionConfig,
         rib:    FlowspecRIB,
-        events: Optional[EventBus] = None,
+        events: EventBus | None = None,
     ):
         self.config     = config
         self.rib        = rib
@@ -59,7 +58,7 @@ class BGPSession:
         self._state     = IDLE
         self._peer_info: dict = {}
         self._hold_time = config.hold_time
-        self._ka_task:  Optional[asyncio.Task] = None
+        self._ka_task:  asyncio.Task | None = None
         self._running   = True
 
         # Queue fed by the persistent passive server
