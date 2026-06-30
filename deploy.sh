@@ -183,11 +183,9 @@ if [[ "${USE_RUST}" -eq 1 ]]; then
     fi
   fi
 
-  echo "Compiling Rust BGP parser extension..."
+  echo "Compiling Rust BGP parser extension (PyO3)..."
   RUST_BUILD_DIR="$(mktemp -d)"
-  cp "${SRC_DIR}/bgpx_rust/Cargo.toml" "${RUST_BUILD_DIR}/"
-  cp -a "${SRC_DIR}/bgpx_rust/src" "${RUST_BUILD_DIR}/"
-  cargo build --release --manifest-path "${RUST_BUILD_DIR}/Cargo.toml"
+  cp -a "${SRC_DIR}/bgpx_rust/." "${RUST_BUILD_DIR}/"
 fi
 
 VENV_DIR="${INSTALL_DIR}/venv"
@@ -221,22 +219,18 @@ tar \
 "${VENV_DIR}/bin/python" -m pip install --upgrade pip
 "${VENV_DIR}/bin/python" -m pip install "${APP_DIR}"
 
-MESSAGE_DIR=$("${VENV_DIR}/bin/python" -I -c \
-  "import bgpx.message, pathlib; print(pathlib.Path(bgpx.message.__file__).parent)")
-RUST_SO="${MESSAGE_DIR}/libbgpx_rust.so"
-mapfile -t RUST_SO_PATHS < <("${VENV_DIR}/bin/python" -I - <<'PY'
-import sysconfig
-from pathlib import Path
-
-for key in ("purelib", "platlib"):
-    print(Path(sysconfig.get_path(key)) / "bgpx/message/libbgpx_rust.so")
-PY
-)
-rm -f "${RUST_SO}" "${RUST_SO_PATHS[@]}"
+# Remove any previous bgpx_rust wheel before verifying the selected engine.
+"${VENV_DIR}/bin/python" -m pip uninstall -y bgpx_rust 2>/dev/null || true
 
 if [[ "${USE_RUST}" -eq 1 ]]; then
-  cp "${RUST_BUILD_DIR}/target/release/libbgpx_rust.so" "${RUST_SO}"
-  echo "Installed Rust parser extension to ${RUST_SO}"
+  "${VENV_DIR}/bin/python" -m pip install --quiet maturin
+  maturin build --release \
+    --manifest-path "${RUST_BUILD_DIR}/Cargo.toml" \
+    --interpreter "${VENV_DIR}/bin/python" \
+    --out "${RUST_BUILD_DIR}/wheels"
+  "${VENV_DIR}/bin/python" -m pip install \
+    --no-index --find-links "${RUST_BUILD_DIR}/wheels" bgpx_rust
+  echo "Installed Rust parser extension (PyO3 wheel)"
 fi
 
 "${VENV_DIR}/bin/python" -I - "${USE_RUST}" <<'PY'
@@ -254,9 +248,9 @@ print("Verified installed package data: bgpx/web/ui.html")
 from bgpx.message import parser
 
 expected_rust = sys.argv[1] == "1"
-if (parser._lib is not None) != expected_rust:
+if (parser._rust is not None) != expected_rust:
     raise SystemExit("Installed parser engine does not match deployment selection")
-engine = "Rust FFI" if expected_rust else "Python"
+engine = "Rust (PyO3 native)" if expected_rust else "Python"
 print(f"Verified installed parser engine: {engine}")
 PY
 
@@ -313,7 +307,7 @@ echo "Executable:        ${VENV_DIR}/bin/bgpx"
 echo "Web UI bind:       0.0.0.0:${WEB_PORT}"
 echo "Web UI URL:        http://localhost:${WEB_PORT}"
 if [[ "${USE_RUST}" -eq 1 ]]; then
-  echo "Parser Engine:     Rust-optimized (libbgpx_rust.so)"
+  echo "Parser Engine:     Rust (PyO3 native extension)"
 else
   echo "Parser Engine:     Pure Python"
 fi

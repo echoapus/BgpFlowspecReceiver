@@ -6,9 +6,9 @@ import struct
 import pytest
 
 from bgpx.constants import (
-    AFI_IPV6, SAFI_FLOWSPEC,
+    AFI_IPV4, AFI_IPV6, SAFI_FLOWSPEC,
     ATTR_MP_REACH_NLRI, ATTR_MP_UNREACH_NLRI,
-    ATTR_IPV6_EXT_COMMUNITIES, ATTR_NEXT_HOP,
+    ATTR_EXT_COMMUNITIES, ATTR_IPV6_EXT_COMMUNITIES, ATTR_NEXT_HOP,
 )
 from bgpx.message.parser import parse_open, parse_update, parse_update_details
 
@@ -46,6 +46,44 @@ def test_parse_update_details_decodes_ipv6_flowspec_and_ipv6_redirect_action():
     }
     assert details["actions"] == ["redirect-to-ipv6=2001:db8::1"]
     assert details["path_attributes"][1]["value"] == ["redirect-to-ipv6=2001:db8::1"]
+
+
+def test_parse_update_details_resolves_redirect_to_ip_next_hop_action():
+    nlri_value = bytes([1, 32, 1, 1, 1, 2])
+    nlri = bytes([len(nlri_value)]) + nlri_value
+    next_hop = socket.inet_aton("192.168.1.200")
+    mp_reach = struct.pack("!HBB", AFI_IPV4, SAFI_FLOWSPEC, len(next_hop)) + next_hop + b"\x00" + nlri
+    redirect_to_next_hop = bytes([0x08, 0x00]) + b"\x00" * 6
+    body = _update(
+        _attr(0xC0, ATTR_EXT_COMMUNITIES, redirect_to_next_hop),
+        _attr(0x80, ATTR_MP_REACH_NLRI, mp_reach),
+    )
+
+    details = parse_update_details(body)
+
+    assert details["announce"] == {
+        "ipv4-flowspec": [{"dst-prefix": "1.1.1.2/32"}]
+    }
+    assert details["actions"] == ["redirect-to-ipv4=192.168.1.200"]
+    assert details["path_attributes"][0]["value"] == ["redirect-to-ipv4=192.168.1.200"]
+
+
+def test_parse_update_details_annotates_juniper_redirect_next_hop_hint():
+    nlri_value = bytes([1, 32, 1, 1, 1, 3])
+    nlri = bytes([len(nlri_value)]) + nlri_value
+    next_hop = socket.inet_aton("192.168.1.1")
+    mp_reach = struct.pack("!HBB", AFI_IPV4, SAFI_FLOWSPEC, len(next_hop)) + next_hop + b"\x00" + nlri
+    juniper_ec = bytes([0x80, 0x0b]) + b"\x00" * 6
+    body = _update(
+        _attr(0xC0, ATTR_EXT_COMMUNITIES, juniper_ec),
+        _attr(0x80, ATTR_MP_REACH_NLRI, mp_reach),
+    )
+
+    details = parse_update_details(body)
+
+    expected = "ec=800b000000000000(juniper-redirect-to-ipv4=192.168.1.1)"
+    assert details["actions"] == [expected]
+    assert details["path_attributes"][0]["value"] == [expected]
 
 
 def test_parse_update_preserves_original_tuple_api():
@@ -102,7 +140,7 @@ def test_parse_ipv6_unicast_mp_reach_and_unreach():
 def test_parse_unicast_rejects_truncated_prefix():
     body = b"\x00\x00\x00\x00" + bytes([24, 203, 0])
 
-    with pytest.raises(ValueError, match="Truncated unicast NLRI"):
+    with pytest.raises(ValueError, match="NLRI"):
         parse_update_details(body)
 
 

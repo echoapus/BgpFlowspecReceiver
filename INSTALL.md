@@ -21,8 +21,8 @@
   # macOS
   brew install tcpdump
   ```
-- **Rust and Cargo** — required only for `deploy.sh --rust` and the full
-  `test.sh` matrix
+- **Rust, Cargo, and maturin** — required only for `deploy.sh --rust` and the
+  full `test.sh` matrix
 
 ---
 
@@ -70,14 +70,16 @@ The script asks which Web UI port to bind. Press Enter to use `8080`.
 
 After `pip install`, the script verifies that the installed package can load `bgpx/web/ui.html`. If package data is missing, deployment stops immediately instead of leaving a service that returns HTTP 500 for the Web UI.
 
-Install the Rust parser and verify that Python loads the compiled FFI library:
+Install the Rust parser and verify that Python loads the compiled PyO3
+extension:
 
 ```bash
 sudo ./deploy.sh --rust
 ```
 
-Re-running deployment without `--rust` removes any previously installed Rust
-library and verifies that the Python parser is active.
+Re-running deployment without `--rust` removes any previously installed
+`bgpx_rust` wheel and verifies that the Python parser is active. Re-running
+with `--rust` reinstalls the optional wheel.
 
 Noninteractive install:
 ```bash
@@ -151,7 +153,7 @@ docker run --rm -p 179:179 -p 8080:8080 bgpx
 The image runs as root by default. If you change it to a non-root user, add
 `--cap-add=NET_BIND_SERVICE` or use a non-privileged passive listen port.
 The provided Dockerfile installs the Python parser. Use host deployment with
-`deploy.sh --rust` when the Rust FFI parser is required.
+`deploy.sh --rust` when the Rust PyO3 parser is required.
 
 ---
 
@@ -208,7 +210,7 @@ pytest
 ```
 
 Run Python fallback, shell/JavaScript checks, Rust fmt/Clippy/unit tests, and
-the release Rust library through Python FFI:
+the release Rust PyO3 extension through Python:
 
 ```bash
 ./test.sh
@@ -319,15 +321,14 @@ sudo kill -9 <PID>
 
 ### Issue: installed parser engine does not match deployment selection
 
-Re-run the current `deploy.sh`. It locates the installed `bgpx.message`
-directory directly, removes stale Rust libraries from both `purelib` and
-`platlib`, and verifies imports in Python isolated mode:
+Re-run the current `deploy.sh`. With `--rust`, it builds and installs the
+optional `bgpx_rust` wheel, then verifies imports in Python isolated mode:
 
 ```bash
 sudo ./deploy.sh --rust
 ```
 
-To switch back to Python and remove the installed `.so`:
+To switch back to Python and remove the optional `bgpx_rust` wheel:
 
 ```bash
 sudo ./deploy.sh
@@ -339,11 +340,25 @@ RFC 8955 encodes `traffic-rate-bytes` as bytes/second. bgpx renders that action
 as network bits/second, so `12500` bytes/second is shown as
 `rate-limit=100000bps` in JSON and `100Kbps` in the UI. If you still see
 `rate-limit=12500bps` after deploying with `--rust`, redeploy so the installed
-Rust FFI library is rebuilt:
+Rust PyO3 extension is rebuilt:
 
 ```bash
 sudo ./deploy.sh --rust
 ```
+
+### Issue: Juniper redirect appears as `ec=800b...`
+
+`0x80:0x0b` overlaps with the registered E-Tree Info extended-community subtype,
+so bgpx keeps it as a raw community instead of treating it as a standard
+FlowSpec redirect. If the UPDATE also has an MP_REACH next-hop, bgpx adds a
+Juniper-style hint such as:
+
+```text
+ec=800b000000000000(juniper-redirect-to-ipv4=192.168.1.1)
+```
+
+Use the `juniper-redirect-to-ipv4` value as the vendor interpretation, while
+the `ec=...` prefix preserves the original community bytes.
 
 ---
 

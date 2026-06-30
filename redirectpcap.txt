@@ -1,0 +1,432 @@
+Frame 22: Packet, 334 bytes on wire (2672 bits), 334 bytes captured (2672 bits)
+    Encapsulation type: Ethernet (1)
+    Arrival Time: Jun 30, 2026 14:15:22.055165000 台北標準時間
+    UTC Arrival Time: Jun 30, 2026 06:15:22.055165000 UTC
+    Epoch Arrival Time: 1782800122.055165000
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 1.193000 milliseconds]
+    [Time delta from previous displayed frame: 1.193000 milliseconds]
+    [Time since reference or first frame: 5.045406000 seconds]
+    Frame Number: 22
+    Frame Length: 334 bytes (2672 bits)
+    Capture Length: 334 bytes (2672 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: eth:ethertype:ip:tcp:bgp]
+    Character encoding: ASCII (0)
+    [Coloring Rule Name: Routing]
+    [Coloring Rule String: hsrp || eigrp || ospf || bgp || cdp || vrrp || carp || gvrp || igmp || ismp]
+Ethernet II, Src: 1e:87:62:b2:c2:f2 (1e:87:62:b2:c2:f2), Dst: VMware_95:39:0c (00:0c:29:95:39:0c)
+    Destination: VMware_95:39:0c (00:0c:29:95:39:0c)
+        .... ..0. .... .... .... .... = LG bit: Globally unique address (factory default)
+        .... ...0 .... .... .... .... = IG bit: Individual address (unicast)
+    Source: 1e:87:62:b2:c2:f2 (1e:87:62:b2:c2:f2)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...0 .... .... .... .... = IG bit: Individual address (unicast)
+    Type: IPv4 (0x0800)
+    [Stream index: 0]
+Internet Protocol Version 4, Src: 192.168.10.220, Dst: 192.168.10.106
+    0100 .... = Version: 4
+    .... 0101 = Header Length: 20 bytes (5)
+    Differentiated Services Field: 0x00 (DSCP: CS0, ECN: Not-ECT)
+        0000 00.. = Differentiated Services Codepoint: Default (0)
+        .... ..00 = Explicit Congestion Notification: Not ECN-Capable Transport (0)
+    Total Length: 320
+    Identification: 0x59ef (23023)
+    010. .... = Flags: 0x2, Don't fragment
+        0... .... = Reserved bit: Not set
+        .1.. .... = Don't fragment: Set
+        ..0. .... = More fragments: Not set
+    ...0 0000 0000 0000 = Fragment Offset: 0
+    Time to Live: 64
+    Protocol: TCP (6)
+    Header Checksum: 0x4932 [validation disabled]
+    [Header checksum status: Unverified]
+    Source Address: 192.168.10.220
+    Destination Address: 192.168.10.106
+    [Stream index: 0]
+Transmission Control Protocol, Src Port: 56319, Dst Port: 179, Seq: 105, Ack: 81, Len: 268
+    Source Port: 56319
+    Destination Port: 179
+    [Stream index: 3]
+    [Stream Packet Number: 12]
+    [Conversation completeness: Incomplete, DATA (15)]
+        ..0. .... = RST: Absent
+        ...0 .... = FIN: Absent
+        .... 1... = Data: Present
+        .... .1.. = ACK: Present
+        .... ..1. = SYN-ACK: Present
+        .... ...1 = SYN: Present
+        [Completeness Flags: ··DASS]
+    [TCP Segment Len: 268]
+    Sequence Number: 105    (relative sequence number)
+    Sequence Number (raw): 2967545558
+    [Next Sequence Number: 373    (relative sequence number)]
+    Acknowledgment Number: 81    (relative ack number)
+    Acknowledgment number (raw): 3253578119
+    1000 .... = Header Length: 32 bytes (8)
+    Flags: 0x018 (PSH, ACK)
+        000. .... .... = Reserved: Not set
+        ...0 .... .... = Accurate ECN: Not set
+        .... 0... .... = Congestion Window Reduced: Not set
+        .... .0.. .... = ECN-Echo: Not set
+        .... ..0. .... = Urgent: Not set
+        .... ...1 .... = Acknowledgment: Set
+        .... .... 1... = Push: Set
+        .... .... .0.. = Reset: Not set
+        .... .... ..0. = Syn: Not set
+        .... .... ...0 = Fin: Not set
+        [TCP Flags: ·······AP···]
+    Window: 32
+    [Calculated window size: 65536]
+    [Window size scaling factor: 2048]
+    Checksum: 0x59d4 [unverified]
+    [Checksum Status: Unverified]
+    Urgent Pointer: 0
+    Options: (12 bytes), No-Operation (NOP), No-Operation (NOP), Timestamps
+        TCP Option - No-Operation (NOP)
+            Kind: No-Operation (1)
+        TCP Option - No-Operation (NOP)
+            Kind: No-Operation (1)
+        TCP Option - Timestamps: TSval 3754776869, TSecr 1523365634
+            Kind: Time Stamp Option (8)
+            Length: 10
+            Timestamp value: 3754776869
+            Timestamp echo reply: 1523365634
+    [Timestamps]
+        [Time since first frame in this TCP stream: 1.042965000 seconds]
+        [Time since previous frame in this TCP stream: 1.193000 milliseconds]
+    [SEQ/ACK analysis]
+        [iRTT: 439.000 microseconds]
+        [Bytes in flight: 268]
+        [Bytes sent since last PSH flag: 268]
+    [Client Contiguous Streams: 1]
+    [Server Contiguous Streams: 1]
+    TCP payload (268 bytes)
+    [PDU Size: 64]
+    [PDU Size: 68]
+    [PDU Size: 68]
+    [PDU Size: 68]
+Border Gateway Protocol - UPDATE Message
+    Marker: ffffffffffffffffffffffffffffffff
+    Length: 64
+    Type: UPDATE Message (2)
+    Withdrawn Routes Length: 0
+    Total Path Attribute Length: 41
+    Path attributes
+        Path Attribute - ORIGIN: IGP
+            Flags: 0x40, Transitive, Well-known, Complete
+                0... .... = Optional: Not set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: ORIGIN (1)
+            Length: 1
+            Origin: IGP (0)
+        Path Attribute - AS_PATH: empty
+            Flags: 0x40, Transitive, Well-known, Complete
+                0... .... = Optional: Not set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: AS_PATH (2)
+            Length: 0
+        Path Attribute - LOCAL_PREF: 100
+            Flags: 0x40, Transitive, Well-known, Complete
+                0... .... = Optional: Not set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: LOCAL_PREF (5)
+            Length: 4
+            Local preference: 100
+        Path Attribute - EXTENDED_COMMUNITIES
+            Flags: 0xc0, Optional, Transitive, Complete
+                1... .... = Optional: Set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: EXTENDED_COMMUNITIES (16)
+            Length: 8
+            Carried extended communities: (1 community)
+                Flow spec redirect AS 2 bytes: RT 65000:123 [Generic Transitive Extended Community]
+                    Type: Generic Transitive Extended Community (0x80)
+                        1... .... = IANA Authority: Allocated on Standard Action, Early Allocation or Experimental Basis
+                        .0.. .... = Transitive across ASes: Transitive
+                    Subtype (Experimental): Flow spec redirect AS 2 bytes (0x08)
+                    2-Octet AS: 65000
+                    4-Octet AN: 123
+        Path Attribute - MP_REACH_NLRI
+            Flags: 0x90, Optional, Extended-Length, Non-transitive, Complete
+                1... .... = Optional: Set
+                .0.. .... = Transitive: Not set
+                ..0. .... = Partial: Not set
+                ...1 .... = Extended-Length: Set
+                .... 0000 = Unused: 0x0
+            Type Code: MP_REACH_NLRI (14)
+            Length: 12
+            Address family identifier (AFI): IPv4 (1)
+            Subsequent address family identifier (SAFI): Flow Spec Filter (133)
+            Next hop: 
+            Number of Subnetwork points of attachment (SNPA): 0
+            Network Layer Reachability Information (NLRI)
+                FLOW_SPEC_NLRI (7 bytes)
+                    NRLI length: 6
+                    Filter: Destination prefix filter (1.1.1.1/32)
+                        Filter type: Destination prefix filter (1)
+                        1.1.1.1/32
+                            Destination IP filter prefix length: 32
+                            Destination IP filter: 1.1.1.1
+Border Gateway Protocol - UPDATE Message
+    Marker: ffffffffffffffffffffffffffffffff
+    Length: 68
+    Type: UPDATE Message (2)
+    Withdrawn Routes Length: 0
+    Total Path Attribute Length: 45
+    Path attributes
+        Path Attribute - ORIGIN: IGP
+            Flags: 0x40, Transitive, Well-known, Complete
+                0... .... = Optional: Not set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: ORIGIN (1)
+            Length: 1
+            Origin: IGP (0)
+        Path Attribute - AS_PATH: empty
+            Flags: 0x40, Transitive, Well-known, Complete
+                0... .... = Optional: Not set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: AS_PATH (2)
+            Length: 0
+        Path Attribute - LOCAL_PREF: 100
+            Flags: 0x40, Transitive, Well-known, Complete
+                0... .... = Optional: Not set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: LOCAL_PREF (5)
+            Length: 4
+            Local preference: 100
+        Path Attribute - EXTENDED_COMMUNITIES
+            Flags: 0xc0, Optional, Transitive, Complete
+                1... .... = Optional: Set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: EXTENDED_COMMUNITIES (16)
+            Length: 8
+            Carried extended communities: (1 community)
+                Unknown type 0x08 subtype 0x00: 0x0000 0x0000 0x0000 [Transitive Flow spec redirect/mirror to IP next-hop]
+                    Type: Transitive Flow spec redirect/mirror to IP next-hop (0x08)
+                        0... .... = IANA Authority: Allocated on First Come First Serve Basis
+                        .0.. .... = Transitive across ASes: Transitive
+                    Subtype: 0x00
+                    Raw Value: 0x0000 0x0000 0x0000
+        Path Attribute - MP_REACH_NLRI
+            Flags: 0x90, Optional, Extended-Length, Non-transitive, Complete
+                1... .... = Optional: Set
+                .0.. .... = Transitive: Not set
+                ..0. .... = Partial: Not set
+                ...1 .... = Extended-Length: Set
+                .... 0000 = Unused: 0x0
+            Type Code: MP_REACH_NLRI (14)
+            Length: 16
+            Address family identifier (AFI): IPv4 (1)
+            Subsequent address family identifier (SAFI): Flow Spec Filter (133)
+            Next hop: c0a801c8
+                [Expert Info (Error/Malformed): The length (4) of Next Hop (FlowSpec) is not zero]
+                    [The length (4) of Next Hop (FlowSpec) is not zero]
+                    [Severity level: Error]
+                    [Group: Malformed]
+                [Expert Info (Error/Malformed): Unknown Next Hop length (4 bytes)]
+                    [Unknown Next Hop length (4 bytes)]
+                    [Severity level: Error]
+                    [Group: Malformed]
+            Number of Subnetwork points of attachment (SNPA): 0
+            Network Layer Reachability Information (NLRI)
+                FLOW_SPEC_NLRI (7 bytes)
+                    NRLI length: 6
+                    Filter: Destination prefix filter (1.1.1.2/32)
+                        Filter type: Destination prefix filter (1)
+                        1.1.1.2/32
+                            Destination IP filter prefix length: 32
+                            Destination IP filter: 1.1.1.2
+Border Gateway Protocol - UPDATE Message
+    Marker: ffffffffffffffffffffffffffffffff
+    Length: 68
+    Type: UPDATE Message (2)
+    Withdrawn Routes Length: 0
+    Total Path Attribute Length: 45
+    Path attributes
+        Path Attribute - ORIGIN: IGP
+            Flags: 0x40, Transitive, Well-known, Complete
+                0... .... = Optional: Not set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: ORIGIN (1)
+            Length: 1
+            Origin: IGP (0)
+        Path Attribute - AS_PATH: empty
+            Flags: 0x40, Transitive, Well-known, Complete
+                0... .... = Optional: Not set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: AS_PATH (2)
+            Length: 0
+        Path Attribute - LOCAL_PREF: 100
+            Flags: 0x40, Transitive, Well-known, Complete
+                0... .... = Optional: Not set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: LOCAL_PREF (5)
+            Length: 4
+            Local preference: 100
+        Path Attribute - EXTENDED_COMMUNITIES
+            Flags: 0xc0, Optional, Transitive, Complete
+                1... .... = Optional: Set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: EXTENDED_COMMUNITIES (16)
+            Length: 8
+            Carried extended communities: (1 community)
+                E-Tree Info: [Generic Transitive Extended Community]
+                    Type: Generic Transitive Extended Community (0x80)
+                        1... .... = IANA Authority: Allocated on Standard Action, Early Allocation or Experimental Basis
+                        .0.. .... = Transitive across ASes: Transitive
+                    Subtype (Experimental): E-Tree Info (0x0b)
+                    .... 0000 0000 0000 = Root VLAN: 0
+                    .... 0000 0000 0000 = Leaf VLAN: 0
+                    Flags: 0x0000
+                        0000 0000 0000 00.. = Reserved: 0x0000
+                        .... .... .... ..0. = P: Not set
+                        .... .... .... ...0 = V: Not set
+        Path Attribute - MP_REACH_NLRI
+            Flags: 0x90, Optional, Extended-Length, Non-transitive, Complete
+                1... .... = Optional: Set
+                .0.. .... = Transitive: Not set
+                ..0. .... = Partial: Not set
+                ...1 .... = Extended-Length: Set
+                .... 0000 = Unused: 0x0
+            Type Code: MP_REACH_NLRI (14)
+            Length: 16
+            Address family identifier (AFI): IPv4 (1)
+            Subsequent address family identifier (SAFI): Flow Spec Filter (133)
+            Next hop: c0a80101
+                [Expert Info (Error/Malformed): The length (4) of Next Hop (FlowSpec) is not zero]
+                    [The length (4) of Next Hop (FlowSpec) is not zero]
+                    [Severity level: Error]
+                    [Group: Malformed]
+                [Expert Info (Error/Malformed): Unknown Next Hop length (4 bytes)]
+                    [Unknown Next Hop length (4 bytes)]
+                    [Severity level: Error]
+                    [Group: Malformed]
+            Number of Subnetwork points of attachment (SNPA): 0
+            Network Layer Reachability Information (NLRI)
+                FLOW_SPEC_NLRI (7 bytes)
+                    NRLI length: 6
+                    Filter: Destination prefix filter (1.1.1.3/32)
+                        Filter type: Destination prefix filter (1)
+                        1.1.1.3/32
+                            Destination IP filter prefix length: 32
+                            Destination IP filter: 1.1.1.3
+Border Gateway Protocol - UPDATE Message
+    Marker: ffffffffffffffffffffffffffffffff
+    Length: 68
+    Type: UPDATE Message (2)
+    Withdrawn Routes Length: 0
+    Total Path Attribute Length: 45
+    Path attributes
+        Path Attribute - ORIGIN: IGP
+            Flags: 0x40, Transitive, Well-known, Complete
+                0... .... = Optional: Not set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: ORIGIN (1)
+            Length: 1
+            Origin: IGP (0)
+        Path Attribute - AS_PATH: empty
+            Flags: 0x40, Transitive, Well-known, Complete
+                0... .... = Optional: Not set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: AS_PATH (2)
+            Length: 0
+        Path Attribute - LOCAL_PREF: 100
+            Flags: 0x40, Transitive, Well-known, Complete
+                0... .... = Optional: Not set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: LOCAL_PREF (5)
+            Length: 4
+            Local preference: 100
+        Path Attribute - EXTENDED_COMMUNITIES
+            Flags: 0xc0, Optional, Transitive, Complete
+                1... .... = Optional: Set
+                .1.. .... = Transitive: Set
+                ..0. .... = Partial: Not set
+                ...0 .... = Extended-Length: Not set
+                .... 0000 = Unused: 0x0
+            Type Code: EXTENDED_COMMUNITIES (16)
+            Length: 8
+            Carried extended communities: (1 community)
+                Flow-spec Redirect to IPv4: 192.168.1.11:0 [Transitive IPv4-Address-Specific]
+                    Type: Transitive IPv4-Address-Specific (0x01)
+                        0... .... = IANA Authority: Allocated on First Come First Serve Basis
+                        .0.. .... = Transitive across ASes: Transitive
+                    Subtype (IPv4): Flow-spec Redirect to IPv4 (0x0c)
+                    IPv4 address: 192.168.1.11
+                    2-Octet AN: 0
+        Path Attribute - MP_REACH_NLRI
+            Flags: 0x90, Optional, Extended-Length, Non-transitive, Complete
+                1... .... = Optional: Set
+                .0.. .... = Transitive: Not set
+                ..0. .... = Partial: Not set
+                ...1 .... = Extended-Length: Set
+                .... 0000 = Unused: 0x0
+            Type Code: MP_REACH_NLRI (14)
+            Length: 16
+            Address family identifier (AFI): IPv4 (1)
+            Subsequent address family identifier (SAFI): Flow Spec Filter (133)
+            Next hop: c0a8010b
+                [Expert Info (Error/Malformed): The length (4) of Next Hop (FlowSpec) is not zero]
+                    [The length (4) of Next Hop (FlowSpec) is not zero]
+                    [Severity level: Error]
+                    [Group: Malformed]
+                [Expert Info (Error/Malformed): Unknown Next Hop length (4 bytes)]
+                    [Unknown Next Hop length (4 bytes)]
+                    [Severity level: Error]
+                    [Group: Malformed]
+            Number of Subnetwork points of attachment (SNPA): 0
+            Network Layer Reachability Information (NLRI)
+                FLOW_SPEC_NLRI (7 bytes)
+                    NRLI length: 6
+                    Filter: Destination prefix filter (1.1.1.4/32)
+                        Filter type: Destination prefix filter (1)
+                        1.1.1.4/32
+                            Destination IP filter prefix length: 32
+                            Destination IP filter: 1.1.1.4

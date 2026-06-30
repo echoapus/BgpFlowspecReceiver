@@ -1,11 +1,7 @@
-use serde::Serialize;
-use serde_json::Value;
-use std::collections::HashMap;
-use std::ffi::CString;
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyList};
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::os::raw::c_char;
 
-// Constants
 const BGP_HEADER_LEN: usize = 19;
 const BGP_MARKER: &[u8; 16] = &[0xff; 16];
 
@@ -31,111 +27,57 @@ const ATTR_AS4_AGGREGATOR: u8 = 18;
 const ATTR_IPV6_EXT_COMMUNITIES: u8 = 25;
 const ATTR_LARGE_COMMUNITIES: u8 = 32;
 
-// Structs for JSON serialization
-#[derive(Serialize)]
-struct OpenResult {
-    version: u8,
-    peer_as: u32,
-    hold_time: u16,
-    router_id: String,
-    supports_4byte_asn: bool,
-}
-
-#[derive(Serialize)]
-struct UpdateResult {
-    announce: HashMap<String, Vec<Value>>,
-    withdraw: HashMap<String, Vec<Value>>,
-    actions: Vec<String>,
-    path_attributes: Vec<PathAttribute>,
-}
-
-#[derive(Serialize)]
-struct PathAttribute {
-    code: u8,
-    name: String,
-    flags: AttrFlags,
-    length: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    value: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    raw: Option<String>,
-}
-
-#[derive(Serialize)]
-struct AttrFlags {
-    optional: bool,
-    transitive: bool,
-    partial: bool,
-    extended_length: bool,
-}
-
-// ── Exported C APIs ─────────────────────────────────────────────────────────
-
-#[no_mangle]
-/// # Safety
-/// `data` must reference `len` readable bytes; output pointers must be writable.
-pub unsafe extern "C" fn parse_header_rust(
-    data: *const u8,
-    len: usize,
-    out_type: *mut u8,
-    out_len: *mut u32,
-) -> i32 {
-    let slice = unsafe { std::slice::from_raw_parts(data, len) };
-    if slice.len() < BGP_HEADER_LEN {
-        return -1;
+#[pyfunction]
+fn parse_header(data: &[u8]) -> PyResult<(u8, u32)> {
+    if data.len() < BGP_HEADER_LEN {
+        return Err(pyo3::exceptions::PyValueError::new_err("Header too short"));
     }
-    if &slice[0..16] != BGP_MARKER {
-        return -2;
+    if &data[..16] != BGP_MARKER {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Invalid BGP marker",
+        ));
     }
-    let length = u16::from_be_bytes([slice[16], slice[17]]) as u32;
+    let length = u16::from_be_bytes([data[16], data[17]]) as u32;
     if length < BGP_HEADER_LEN as u32 {
-        return -3;
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "BGP message length below minimum 19",
+        ));
     }
-    unsafe {
-        *out_type = slice[18];
-        *out_len = length - BGP_HEADER_LEN as u32;
-    }
-    0
+    Ok((data[18], length - BGP_HEADER_LEN as u32))
 }
 
-#[no_mangle]
-/// # Safety
-/// `body` must reference `len` readable bytes.
-pub unsafe extern "C" fn parse_open_rust(body: *const u8, len: usize) -> *mut c_char {
-    let slice = unsafe { std::slice::from_raw_parts(body, len) };
-    if slice.len() < 9 {
-        return std::ptr::null_mut();
+#[pyfunction]
+fn parse_open(py: Python, body: &[u8]) -> PyResult<PyObject> {
+    if body.len() < 9 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "OPEN body too short",
+        ));
     }
-    let version = slice[0];
-    let mut peer_as = u16::from_be_bytes([slice[1], slice[2]]) as u32;
-    let hold_time = u16::from_be_bytes([slice[3], slice[4]]);
-    let router_id = format!("{}.{}.{}.{}", slice[5], slice[6], slice[7], slice[8]);
+
+    let mut peer_as = u16::from_be_bytes([body[1], body[2]]) as u32;
     let mut supports_4byte_asn = false;
 
-    // Optional parameters for 4-byte ASN (Capability 65)
-    if slice.len() > 10 {
-        let opt_len = slice[9] as usize;
+    if body.len() > 10 {
         let mut offset = 10;
-        let end = std::cmp::min(10 + opt_len, slice.len());
+        let end = (10 + body[9] as usize).min(body.len());
         while offset + 2 <= end {
-            let param_type = slice[offset];
-            let param_len = slice[offset + 1] as usize;
+            let param_type = body[offset];
+            let param_len = body[offset + 1] as usize;
             offset += 2;
             if param_type == 2 {
-                // Capabilities
                 let mut cap_offset = offset;
-                let cap_end = std::cmp::min(offset + param_len, end);
+                let cap_end = (offset + param_len).min(end);
                 while cap_offset + 2 <= cap_end {
-                    let cap_code = slice[cap_offset];
-                    let cap_len = slice[cap_offset + 1] as usize;
+                    let cap_code = body[cap_offset];
+                    let cap_len = body[cap_offset + 1] as usize;
                     cap_offset += 2;
-                    if cap_code == 65 && cap_len == 4 && cap_offset + 4 <= slice.len() {
+                    if cap_code == 65 && cap_len == 4 && cap_offset + 4 <= body.len() {
                         supports_4byte_asn = true;
                         peer_as = u32::from_be_bytes([
-                            slice[cap_offset],
-                            slice[cap_offset + 1],
-                            slice[cap_offset + 2],
-                            slice[cap_offset + 3],
+                            body[cap_offset],
+                            body[cap_offset + 1],
+                            body[cap_offset + 2],
+                            body[cap_offset + 3],
                         ]);
                     }
                     cap_offset += cap_len;
@@ -145,157 +87,269 @@ pub unsafe extern "C" fn parse_open_rust(body: *const u8, len: usize) -> *mut c_
         }
     }
 
-    let res = OpenResult {
-        version,
-        peer_as,
-        hold_time,
-        router_id,
-        supports_4byte_asn,
-    };
-    serialize_to_c_char(&res)
+    let d = PyDict::new_bound(py);
+    d.set_item("version", body[0])?;
+    d.set_item("peer_as", peer_as)?;
+    d.set_item("hold_time", u16::from_be_bytes([body[3], body[4]]))?;
+    d.set_item(
+        "router_id",
+        Ipv4Addr::new(body[5], body[6], body[7], body[8]).to_string(),
+    )?;
+    d.set_item("supports_4byte_asn", supports_4byte_asn)?;
+    Ok(d.into_py(py))
 }
 
-#[no_mangle]
-/// # Safety
-/// `body` must reference `len` readable bytes and `asn_len` must be 2 or 4.
-pub unsafe extern "C" fn parse_update_details_rust(
-    body: *const u8,
-    len: usize,
-    asn_len: usize,
-) -> *mut c_char {
+#[pyfunction]
+fn parse_update_details(py: Python, body: &[u8], asn_len: usize) -> PyResult<PyObject> {
     if asn_len != 2 && asn_len != 4 {
-        return std::ptr::null_mut();
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "asn_len must be 2 or 4",
+        ));
     }
-    let slice = unsafe { std::slice::from_raw_parts(body, len) };
-    let mut offset = 0;
 
-    if offset + 2 > slice.len() {
-        return std::ptr::null_mut();
+    let mut offset = 0;
+    if offset + 2 > body.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "UPDATE too short for withdrawn-routes length field",
+        ));
     }
-    let withdrawn_len = u16::from_be_bytes([slice[offset], slice[offset + 1]]) as usize;
+    let withdrawn_len = u16::from_be_bytes([body[offset], body[offset + 1]]) as usize;
     offset += 2;
-    if offset + withdrawn_len > slice.len() {
-        return std::ptr::null_mut();
+    if offset + withdrawn_len > body.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "UPDATE withdrawn_len exceeds message body",
+        ));
     }
-    let withdrawn_payload = &slice[offset..offset + withdrawn_len];
+    let withdrawn_payload = &body[offset..offset + withdrawn_len];
     offset += withdrawn_len;
 
-    // Path attributes length
-    if offset + 2 > slice.len() {
-        return std::ptr::null_mut();
+    if offset + 2 > body.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "UPDATE too short for path-attributes length field",
+        ));
     }
-    let attr_len = u16::from_be_bytes([slice[offset], slice[offset + 1]]) as usize;
+    let attr_len = u16::from_be_bytes([body[offset], body[offset + 1]]) as usize;
     offset += 2;
     let attr_end = offset + attr_len;
-    if attr_end > slice.len() {
-        return std::ptr::null_mut();
+    if attr_end > body.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "UPDATE attr_len exceeds message body",
+        ));
     }
 
-    let mut announce = HashMap::new();
-    let mut withdraw = HashMap::new();
-    let mut actions = Vec::new();
-    let mut path_attributes = Vec::new();
+    let announce = PyDict::new_bound(py);
+    let withdraw = PyDict::new_bound(py);
+    let actions = PyList::empty_bound(py);
+    let path_attributes = PyList::empty_bound(py);
+    let mut trailing_next_hop: Option<String> = None;
 
     while offset < attr_end {
         if offset + 2 > attr_end {
-            return std::ptr::null_mut();
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Truncated path-attribute header",
+            ));
         }
-        let flags_byte = slice[offset];
-        let atype = slice[offset + 1];
+        let flags = body[offset];
+        let code = body[offset + 1];
         offset += 2;
 
-        let alen: usize;
-        if (flags_byte & 0x10) != 0 {
+        let alen = if flags & 0x10 != 0 {
             if offset + 2 > attr_end {
-                return std::ptr::null_mut();
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Truncated extended path-attribute length",
+                ));
             }
-            alen = u16::from_be_bytes([slice[offset], slice[offset + 1]]) as usize;
+            let n = u16::from_be_bytes([body[offset], body[offset + 1]]) as usize;
             offset += 2;
+            n
         } else {
-            if offset + 1 > attr_end {
-                return std::ptr::null_mut();
+            if offset >= attr_end {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Truncated path-attribute length",
+                ));
             }
-            alen = slice[offset] as usize;
+            let n = body[offset] as usize;
             offset += 1;
-        }
+            n
+        };
 
         if offset + alen > attr_end {
-            return std::ptr::null_mut();
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Path attribute exceeds declared attribute length",
+            ));
         }
-        let abody = &slice[offset..offset + alen];
+        let data = &body[offset..offset + alen];
         offset += alen;
 
-        let attr_info = match decode_path_attribute(
-            flags_byte,
-            atype,
-            abody,
+        let attr = path_attr_py(
+            py,
+            flags,
+            code,
+            data,
             asn_len,
-            &mut announce,
-            &mut withdraw,
-            &mut actions,
-        ) {
-            Ok(attr) => attr,
-            Err(_) => return std::ptr::null_mut(),
-        };
-        path_attributes.push(attr_info);
+            &announce,
+            &withdraw,
+            &actions,
+            &path_attributes,
+            &mut trailing_next_hop,
+        )?;
+        path_attributes.append(attr)?;
     }
 
     if !withdrawn_payload.is_empty() {
-        let routes = match parse_unicast_nlri(withdrawn_payload, AFI_IPV4, None) {
-            Ok(routes) => routes,
-            Err(_) => return std::ptr::null_mut(),
-        };
-        withdraw.insert("ipv4-unicast".to_string(), routes);
+        let routes = unicast_routes_py(py, withdrawn_payload, AFI_IPV4, None).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err("Failed to parse withdrawn NLRI")
+        })?;
+        withdraw.set_item("ipv4-unicast", routes)?;
     }
 
-    if attr_end < slice.len() {
-        let next_hop = path_attributes.iter().find_map(|attribute| {
-            if attribute.code == ATTR_NEXT_HOP {
-                attribute.value.as_ref()?.as_str().map(str::to_string)
-            } else {
-                None
+    if attr_end < body.len() {
+        let routes = unicast_routes_py(
+            py,
+            &body[attr_end..],
+            AFI_IPV4,
+            trailing_next_hop.as_deref(),
+        )
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("Failed to parse trailing NLRI"))?;
+        announce.set_item("ipv4-unicast", routes)?;
+    }
+
+    let d = PyDict::new_bound(py);
+    d.set_item("announce", announce)?;
+    d.set_item("withdraw", withdraw)?;
+    d.set_item("actions", actions)?;
+    d.set_item("path_attributes", path_attributes)?;
+    Ok(d.into_py(py))
+}
+
+#[pymodule]
+fn bgpx_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(parse_header, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_open, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_update_details, m)?)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn path_attr_py<'py>(
+    py: Python<'py>,
+    flags: u8,
+    code: u8,
+    data: &[u8],
+    asn_len: usize,
+    announce: &Bound<'py, PyDict>,
+    withdraw: &Bound<'py, PyDict>,
+    actions: &Bound<'py, PyList>,
+    path_attributes: &Bound<'py, PyList>,
+    trailing_next_hop: &mut Option<String>,
+) -> PyResult<PyObject> {
+    if code == ATTR_MP_REACH_NLRI && data.len() > 3 {
+        let afi = u16::from_be_bytes([data[0], data[1]]);
+        let safi = data[2];
+        let nh_len = data[3] as usize;
+        let nlri_start = 4 + nh_len + 1;
+        if nlri_start > data.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "MP_REACH next-hop exceeds attribute length",
+            ));
+        }
+        if afi == AFI_IPV4 || afi == AFI_IPV6 {
+            if safi == SAFI_FLOWSPEC {
+                let nh = next_hop_string(&data[4..4 + nh_len]);
+                if !nh.is_empty() {
+                    apply_flowspec_next_hop_actions(actions, path_attributes, &nh)?;
+                }
+                announce.set_item(
+                    if afi == AFI_IPV6 {
+                        "ipv6-flowspec"
+                    } else {
+                        "ipv4-flowspec"
+                    },
+                    flowspec_routes_py(py, &data[nlri_start..], afi)?,
+                )?;
+            } else if safi == 1 {
+                let nh = next_hop_string(&data[4..4 + nh_len]);
+                announce.set_item(
+                    if afi == AFI_IPV6 {
+                        "ipv6-unicast"
+                    } else {
+                        "ipv4-unicast"
+                    },
+                    unicast_routes_py(py, &data[nlri_start..], afi, Some(&nh)).map_err(|_| {
+                        pyo3::exceptions::PyValueError::new_err("Failed to parse MP_REACH NLRI")
+                    })?,
+                )?;
             }
-        });
-        let routes = match parse_unicast_nlri(&slice[attr_end..], AFI_IPV4, next_hop.as_deref()) {
-            Ok(routes) => routes,
-            Err(_) => return std::ptr::null_mut(),
-        };
-        announce.insert("ipv4-unicast".to_string(), routes);
-    }
-
-    let res = UpdateResult {
-        announce,
-        withdraw,
-        actions,
-        path_attributes,
-    };
-    serialize_to_c_char(&res)
-}
-
-#[no_mangle]
-/// # Safety
-/// `s` must be null or a pointer returned by this library.
-pub unsafe extern "C" fn free_string(s: *mut c_char) {
-    if !s.is_null() {
-        unsafe {
-            let _ = CString::from_raw(s);
+        }
+    } else if code == ATTR_MP_UNREACH_NLRI && data.len() > 2 {
+        let afi = u16::from_be_bytes([data[0], data[1]]);
+        let safi = data[2];
+        if afi == AFI_IPV4 || afi == AFI_IPV6 {
+            if safi == SAFI_FLOWSPEC {
+                withdraw.set_item(
+                    if afi == AFI_IPV6 {
+                        "ipv6-flowspec"
+                    } else {
+                        "ipv4-flowspec"
+                    },
+                    flowspec_routes_py(py, &data[3..], afi)?,
+                )?;
+            } else if safi == 1 {
+                withdraw.set_item(
+                    if afi == AFI_IPV6 {
+                        "ipv6-unicast"
+                    } else {
+                        "ipv4-unicast"
+                    },
+                    unicast_routes_py(py, &data[3..], afi, None).map_err(|_| {
+                        pyo3::exceptions::PyValueError::new_err("Failed to parse MP_UNREACH NLRI")
+                    })?,
+                )?;
+            }
         }
     }
-}
 
-// ── Private Helpers ─────────────────────────────────────────────────────────
+    let attr = PyDict::new_bound(py);
+    attr.set_item("code", code)?;
+    if let Some(name) = attr_name(code) {
+        attr.set_item("name", name)?;
+    } else {
+        attr.set_item("name", format!("ATTR_{}", code))?;
+    }
+    let fd = PyDict::new_bound(py);
+    fd.set_item("optional", flags & 0x80 != 0)?;
+    fd.set_item("transitive", flags & 0x40 != 0)?;
+    fd.set_item("partial", flags & 0x20 != 0)?;
+    fd.set_item("extended_length", flags & 0x10 != 0)?;
+    attr.set_item("flags", fd)?;
+    attr.set_item("length", data.len())?;
 
-fn serialize_to_c_char<T: Serialize>(val: &T) -> *mut c_char {
-    if let Ok(json) = serde_json::to_string(val) {
-        if let Ok(c_str) = CString::new(json) {
-            return c_str.into_raw();
+    if code == ATTR_EXT_COMMUNITIES {
+        let v = PyList::empty_bound(py);
+        for s in parse_ext_communities(data) {
+            actions.append(&s)?;
+            v.append(s)?;
+        }
+        attr.set_item("value", v)?;
+    } else if code == ATTR_IPV6_EXT_COMMUNITIES {
+        let v = PyList::empty_bound(py);
+        for s in parse_ipv6_ext_communities(data) {
+            actions.append(&s)?;
+            v.append(s)?;
+        }
+        attr.set_item("value", v)?;
+    } else {
+        match attr_value_py(py, code, data, asn_len, trailing_next_hop) {
+            Ok(v) => attr.set_item("value", v)?,
+            Err(_) => attr.set_item("raw", hex_encode(data))?,
         }
     }
-    std::ptr::null_mut()
+
+    Ok(attr.into_py(py))
 }
 
-fn path_attr_name(code: u8) -> String {
-    let name = match code {
+fn attr_name(code: u8) -> Option<&'static str> {
+    Some(match code {
         ATTR_ORIGIN => "ORIGIN",
         ATTR_AS_PATH => "AS_PATH",
         ATTR_NEXT_HOP => "NEXT_HOP",
@@ -313,249 +367,102 @@ fn path_attr_name(code: u8) -> String {
         ATTR_AS4_AGGREGATOR => "AS4_AGGREGATOR",
         ATTR_IPV6_EXT_COMMUNITIES => "IPV6_ADDRESS_SPECIFIC_EXTENDED_COMMUNITIES",
         ATTR_LARGE_COMMUNITIES => "LARGE_COMMUNITIES",
-        _ => return format!("ATTR_{}", code),
-    };
-    name.to_string()
+        _ => return None,
+    })
 }
 
-fn decode_path_attribute(
-    flags: u8,
+fn attr_value_py(
+    py: Python,
     code: u8,
     data: &[u8],
     asn_len: usize,
-    announce: &mut HashMap<String, Vec<Value>>,
-    withdraw: &mut HashMap<String, Vec<Value>>,
-    actions: &mut Vec<String>,
-) -> Result<PathAttribute, ()> {
-    let mut attr = PathAttribute {
-        code,
-        name: path_attr_name(code),
-        flags: AttrFlags {
-            optional: (flags & 0x80) != 0,
-            transitive: (flags & 0x40) != 0,
-            partial: (flags & 0x20) != 0,
-            extended_length: (flags & 0x10) != 0,
-        },
-        length: data.len(),
-        value: None,
-        raw: None,
-    };
-
-    if code == ATTR_MP_REACH_NLRI && data.len() > 3 {
-        let afi = u16::from_be_bytes([data[0], data[1]]);
-        let safi = data[2];
-        let nh_len = data[3] as usize;
-        let nlri_start = 4 + nh_len + 1;
-        if nlri_start > data.len() {
-            return Err(());
-        }
-        if afi == AFI_IPV4 || afi == AFI_IPV6 {
-            if safi == SAFI_FLOWSPEC {
-                let label = if afi == AFI_IPV6 {
-                    "ipv6-flowspec"
-                } else {
-                    "ipv4-flowspec"
-                };
-                let routes = parse_nlri_list(&data[nlri_start..], afi);
-                announce.insert(label.to_string(), routes);
-            } else if safi == 1 {
-                let label = if afi == AFI_IPV6 {
-                    "ipv6-unicast"
-                } else {
-                    "ipv4-unicast"
-                };
-                let next_hop = format_next_hop(&data[4..4 + nh_len]);
-                let routes = parse_unicast_nlri(&data[nlri_start..], afi, Some(&next_hop))?;
-                announce.insert(label.to_string(), routes);
-            }
-        }
-    } else if code == ATTR_MP_UNREACH_NLRI && data.len() > 2 {
-        let afi = u16::from_be_bytes([data[0], data[1]]);
-        let safi = data[2];
-        if afi == AFI_IPV4 || afi == AFI_IPV6 {
-            let label = if afi == AFI_IPV6 { "ipv6" } else { "ipv4" };
-            if safi == SAFI_FLOWSPEC {
-                withdraw.insert(
-                    format!("{}-flowspec", label),
-                    parse_nlri_list(&data[3..], afi),
-                );
-            } else if safi == 1 {
-                withdraw.insert(
-                    format!("{}-unicast", label),
-                    parse_unicast_nlri(&data[3..], afi, None)?,
-                );
-            }
-        }
-    } else if code == ATTR_EXT_COMMUNITIES {
-        actions.extend(parse_ext_communities(data));
-    } else if code == ATTR_IPV6_EXT_COMMUNITIES {
-        actions.extend(parse_ipv6_ext_communities(data));
-    }
-
-    match decode_path_attribute_value(code, data, asn_len) {
-        Ok(val) => attr.value = Some(val),
-        Err(_) => attr.raw = Some(hex_encode(data)),
-    }
-
-    Ok(attr)
-}
-
-fn decode_path_attribute_value(code: u8, data: &[u8], asn_len: usize) -> Result<Value, ()> {
+    trailing_next_hop: &mut Option<String>,
+) -> Result<PyObject, ()> {
     match code {
         ATTR_ORIGIN => {
             if data.is_empty() {
                 return Err(());
             }
-            let name = match data[0] {
+            Ok(match data[0] {
                 0 => "igp",
                 1 => "egp",
                 2 => "incomplete",
                 _ => "unknown",
-            };
-            Ok(Value::String(name.to_string()))
+            }
+            .into_py(py))
         }
-        ATTR_AS_PATH => {
-            let path = parse_as_path(data, asn_len)?;
-            Ok(serde_json::to_value(&path).unwrap())
-        }
+        ATTR_AS_PATH => as_path_py(py, data, asn_len),
         ATTR_NEXT_HOP => {
             if data.len() != 4 {
                 return Err(());
             }
-            let ip = Ipv4Addr::new(data[0], data[1], data[2], data[3]);
-            Ok(Value::String(ip.to_string()))
+            let s = Ipv4Addr::new(data[0], data[1], data[2], data[3]).to_string();
+            *trailing_next_hop = Some(s.clone());
+            Ok(s.into_py(py))
         }
         ATTR_MED | ATTR_LOCAL_PREF => {
             if data.len() != 4 {
                 return Err(());
             }
-            let val = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-            Ok(Value::Number(val.into()))
+            Ok(u32::from_be_bytes([data[0], data[1], data[2], data[3]]).into_py(py))
         }
         ATTR_ATOMIC_AGGREGATE => {
-            if !data.is_empty() {
-                return Err(());
+            if data.is_empty() {
+                Ok(true.into_py(py))
+            } else {
+                Err(())
             }
-            Ok(Value::Bool(true))
         }
         ATTR_AGGREGATOR => {
             if data.len() != 6 {
                 return Err(());
             }
-            let asn = u16::from_be_bytes([data[0], data[1]]);
-            let ip = Ipv4Addr::new(data[2], data[3], data[4], data[5]);
-            let mut map = serde_json::Map::new();
-            map.insert("asn".to_string(), Value::Number(asn.into()));
-            map.insert("router_id".to_string(), Value::String(ip.to_string()));
-            Ok(Value::Object(map))
+            let d = PyDict::new_bound(py);
+            d.set_item("asn", u16::from_be_bytes([data[0], data[1]]))
+                .map_err(|_| ())?;
+            d.set_item(
+                "router_id",
+                Ipv4Addr::new(data[2], data[3], data[4], data[5]).to_string(),
+            )
+            .map_err(|_| ())?;
+            Ok(d.into_py(py))
         }
-        ATTR_COMMUNITIES => {
-            if !data.len().is_multiple_of(4) {
-                return Err(());
-            }
-            let mut comms = Vec::new();
-            for chunk in data.chunks_exact(4) {
-                let val = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                let s = match val {
-                    0xFFFFFF01 => "NO_EXPORT".to_string(),
-                    0xFFFFFF02 => "NO_ADVERTISE".to_string(),
-                    0xFFFFFF03 => "NO_EXPORT_SUBCONFED".to_string(),
-                    0xFFFFFF04 => "NOPEER".to_string(),
-                    _ => {
-                        let high = u16::from_be_bytes([chunk[0], chunk[1]]);
-                        let low = u16::from_be_bytes([chunk[2], chunk[3]]);
-                        format!("{}:{}", high, low)
-                    }
-                };
-                comms.push(Value::String(s));
-            }
-            Ok(Value::Array(comms))
-        }
+        ATTR_COMMUNITIES => communities_py(py, data),
         ATTR_ORIGINATOR_ID => {
             if data.len() != 4 {
                 return Err(());
             }
-            let ip = Ipv4Addr::new(data[0], data[1], data[2], data[3]);
-            Ok(Value::String(ip.to_string()))
+            Ok(Ipv4Addr::new(data[0], data[1], data[2], data[3])
+                .to_string()
+                .into_py(py))
         }
-        ATTR_CLUSTER_LIST => {
-            if !data.len().is_multiple_of(4) {
-                return Err(());
-            }
-            let mut list = Vec::new();
-            for chunk in data.chunks_exact(4) {
-                let ip = Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]);
-                list.push(Value::String(ip.to_string()));
-            }
-            Ok(Value::Array(list))
-        }
-        ATTR_MP_REACH_NLRI | ATTR_MP_UNREACH_NLRI => {
-            if data.len() < 3 {
-                return Err(());
-            }
-            let afi = u16::from_be_bytes([data[0], data[1]]);
-            let safi = data[2];
-            let mut map = serde_json::Map::new();
-            map.insert("afi".to_string(), Value::Number(afi.into()));
-            map.insert("safi".to_string(), Value::Number(safi.into()));
-
-            if code == ATTR_MP_REACH_NLRI {
-                let nh_len = data[3] as usize;
-                if 4 + nh_len <= data.len() {
-                    let nh_bytes = &data[4..4 + nh_len];
-                    let nh_str = format_next_hop(nh_bytes);
-                    map.insert("next_hop".to_string(), Value::String(nh_str));
-                    let nlri_len = data.len().saturating_sub(4 + nh_len + 1);
-                    map.insert("nlri_length".to_string(), Value::Number(nlri_len.into()));
-                }
-            } else {
-                let nlri_len = data.len().saturating_sub(3);
-                map.insert("nlri_length".to_string(), Value::Number(nlri_len.into()));
-            }
-            Ok(Value::Object(map))
-        }
-        ATTR_EXT_COMMUNITIES => {
-            let list = parse_ext_communities(data);
-            Ok(Value::Array(list.into_iter().map(Value::String).collect()))
-        }
-        ATTR_AS4_PATH => {
-            let path = parse_as_path(data, 4)?;
-            Ok(serde_json::to_value(&path).unwrap())
-        }
+        ATTR_CLUSTER_LIST => cluster_list_py(py, data),
+        ATTR_MP_REACH_NLRI | ATTR_MP_UNREACH_NLRI => mp_attr_py(py, code, data),
+        ATTR_AS4_PATH => as_path_py(py, data, 4),
         ATTR_AS4_AGGREGATOR => {
             if data.len() != 8 {
                 return Err(());
             }
-            let asn = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-            let ip = Ipv4Addr::new(data[4], data[5], data[6], data[7]);
-            let mut map = serde_json::Map::new();
-            map.insert("asn".to_string(), Value::Number(asn.into()));
-            map.insert("router_id".to_string(), Value::String(ip.to_string()));
-            Ok(Value::Object(map))
+            let d = PyDict::new_bound(py);
+            d.set_item(
+                "asn",
+                u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
+            )
+            .map_err(|_| ())?;
+            d.set_item(
+                "router_id",
+                Ipv4Addr::new(data[4], data[5], data[6], data[7]).to_string(),
+            )
+            .map_err(|_| ())?;
+            Ok(d.into_py(py))
         }
-        ATTR_IPV6_EXT_COMMUNITIES => {
-            let list = parse_ipv6_ext_communities(data);
-            Ok(Value::Array(list.into_iter().map(Value::String).collect()))
-        }
-        ATTR_LARGE_COMMUNITIES => {
-            if !data.len().is_multiple_of(12) {
-                return Err(());
-            }
-            let mut comms = Vec::new();
-            for chunk in data.chunks_exact(12) {
-                let ga = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                let ld1 = u32::from_be_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
-                let ld2 = u32::from_be_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
-                comms.push(Value::String(format!("{}:{}:{}", ga, ld1, ld2)));
-            }
-            Ok(Value::Array(comms))
-        }
+        ATTR_LARGE_COMMUNITIES => large_communities_py(py, data),
         _ => Err(()),
     }
 }
 
-fn parse_as_path(data: &[u8], asn_len: usize) -> Result<Vec<Value>, ()> {
-    let mut path = Vec::new();
+fn as_path_py(py: Python, data: &[u8], asn_len: usize) -> Result<PyObject, ()> {
+    let path = PyList::empty_bound(py);
     let mut offset = 0;
     while offset + 2 <= data.len() {
         let seg_type = data[offset];
@@ -565,56 +472,128 @@ fn parse_as_path(data: &[u8], asn_len: usize) -> Result<Vec<Value>, ()> {
         if offset + byte_len > data.len() {
             return Err(());
         }
-        let mut asns = Vec::new();
-        for i in (offset..offset + byte_len).step_by(asn_len) {
+        let asns = PyList::empty_bound(py);
+        let end = offset + byte_len;
+        while offset < end {
             let asn = if asn_len == 2 {
-                u16::from_be_bytes([data[i], data[i + 1]]) as u32
+                u16::from_be_bytes([data[offset], data[offset + 1]]) as u32
             } else {
-                u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]])
+                u32::from_be_bytes([
+                    data[offset],
+                    data[offset + 1],
+                    data[offset + 2],
+                    data[offset + 3],
+                ])
             };
-            asns.push(Value::Number(asn.into()));
+            asns.append(asn).map_err(|_| ())?;
+            offset += asn_len;
         }
-        offset += byte_len;
-
-        let seg_name = match seg_type {
-            1 => "AS_SET",
-            2 => "AS_SEQUENCE",
-            3 => "AS_CONFED_SEQUENCE",
-            4 => "AS_CONFED_SET",
-            _ => "SEGMENT_UNKNOWN",
-        };
-
-        let mut seg_map = serde_json::Map::new();
-        seg_map.insert("type".to_string(), Value::String(seg_name.to_string()));
-        seg_map.insert("asns".to_string(), Value::Array(asns));
-        path.push(Value::Object(seg_map));
+        let seg = PyDict::new_bound(py);
+        seg.set_item(
+            "type",
+            match seg_type {
+                1 => "AS_SET",
+                2 => "AS_SEQUENCE",
+                3 => "AS_CONFED_SEQUENCE",
+                4 => "AS_CONFED_SET",
+                _ => "SEGMENT_UNKNOWN",
+            },
+        )
+        .map_err(|_| ())?;
+        seg.set_item("asns", asns).map_err(|_| ())?;
+        path.append(seg).map_err(|_| ())?;
     }
-    if offset != data.len() {
+    if offset == data.len() {
+        Ok(path.into_py(py))
+    } else {
+        Err(())
+    }
+}
+
+fn communities_py(py: Python, data: &[u8]) -> Result<PyObject, ()> {
+    if !data.len().is_multiple_of(4) {
         return Err(());
     }
-    Ok(path)
+    let out = PyList::empty_bound(py);
+    for c in data.chunks_exact(4) {
+        let val = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
+        let s = match val {
+            0xFFFFFF01 => "NO_EXPORT".to_string(),
+            0xFFFFFF02 => "NO_ADVERTISE".to_string(),
+            0xFFFFFF03 => "NO_EXPORT_SUBCONFED".to_string(),
+            0xFFFFFF04 => "NOPEER".to_string(),
+            _ => format!(
+                "{}:{}",
+                u16::from_be_bytes([c[0], c[1]]),
+                u16::from_be_bytes([c[2], c[3]])
+            ),
+        };
+        out.append(s).map_err(|_| ())?;
+    }
+    Ok(out.into_py(py))
 }
 
-fn format_next_hop(data: &[u8]) -> String {
-    if data.is_empty() {
-        return "".to_string();
+fn cluster_list_py(py: Python, data: &[u8]) -> Result<PyObject, ()> {
+    if !data.len().is_multiple_of(4) {
+        return Err(());
     }
-    if data.len() == 4 {
-        let ip = Ipv4Addr::new(data[0], data[1], data[2], data[3]);
-        return ip.to_string();
+    let out = PyList::empty_bound(py);
+    for c in data.chunks_exact(4) {
+        out.append(Ipv4Addr::new(c[0], c[1], c[2], c[3]).to_string())
+            .map_err(|_| ())?;
     }
-    if data.len() == 16 {
-        return Ipv6Addr::from(<[u8; 16]>::try_from(data).unwrap()).to_string();
-    }
-    if data.len() == 32 {
-        let ip1 = Ipv6Addr::from(<[u8; 16]>::try_from(&data[..16]).unwrap());
-        let ip2 = Ipv6Addr::from(<[u8; 16]>::try_from(&data[16..]).unwrap());
-        return format!("{},{}", ip1, ip2);
-    }
-    hex_encode(data)
+    Ok(out.into_py(py))
 }
 
-fn parse_unicast_nlri(payload: &[u8], afi: u16, next_hop: Option<&str>) -> Result<Vec<Value>, ()> {
+fn large_communities_py(py: Python, data: &[u8]) -> Result<PyObject, ()> {
+    if !data.len().is_multiple_of(12) {
+        return Err(());
+    }
+    let out = PyList::empty_bound(py);
+    for c in data.chunks_exact(12) {
+        out.append(format!(
+            "{}:{}:{}",
+            u32::from_be_bytes([c[0], c[1], c[2], c[3]]),
+            u32::from_be_bytes([c[4], c[5], c[6], c[7]]),
+            u32::from_be_bytes([c[8], c[9], c[10], c[11]])
+        ))
+        .map_err(|_| ())?;
+    }
+    Ok(out.into_py(py))
+}
+
+fn mp_attr_py(py: Python, code: u8, data: &[u8]) -> Result<PyObject, ()> {
+    if data.len() < 3 {
+        return Err(());
+    }
+    let d = PyDict::new_bound(py);
+    d.set_item("afi", u16::from_be_bytes([data[0], data[1]]))
+        .map_err(|_| ())?;
+    d.set_item("safi", data[2]).map_err(|_| ())?;
+    if code == ATTR_MP_REACH_NLRI {
+        if data.len() < 4 {
+            return Err(());
+        }
+        let nh_len = data[3] as usize;
+        if 4 + nh_len <= data.len() {
+            d.set_item("next_hop", next_hop_string(&data[4..4 + nh_len]))
+                .map_err(|_| ())?;
+            d.set_item("nlri_length", data.len().saturating_sub(4 + nh_len + 1))
+                .map_err(|_| ())?;
+        }
+    } else {
+        d.set_item("nlri_length", data.len().saturating_sub(3))
+            .map_err(|_| ())?;
+    }
+    Ok(d.into_py(py))
+}
+
+fn unicast_routes_py<'py>(
+    py: Python<'py>,
+    payload: &[u8],
+    afi: u16,
+    next_hop: Option<&str>,
+) -> Result<Bound<'py, PyList>, ()> {
     let max_bits = if afi == AFI_IPV6 {
         128
     } else if afi == AFI_IPV4 {
@@ -622,9 +601,8 @@ fn parse_unicast_nlri(payload: &[u8], afi: u16, next_hop: Option<&str>) -> Resul
     } else {
         return Err(());
     };
-    let mut routes = Vec::new();
+    let routes = PyList::empty_bound(py);
     let mut offset = 0;
-
     while offset < payload.len() {
         let prefix_len = payload[offset] as usize;
         offset += 1;
@@ -635,51 +613,28 @@ fn parse_unicast_nlri(payload: &[u8], afi: u16, next_hop: Option<&str>) -> Resul
         if offset + byte_len > payload.len() {
             return Err(());
         }
-        let raw = &payload[offset..offset + byte_len];
+        let prefix = prefix_string(&payload[offset..offset + byte_len], prefix_len, afi, true)?;
         offset += byte_len;
-
-        let prefix = if afi == AFI_IPV6 {
-            let mut address = [0u8; 16];
-            address[..byte_len].copy_from_slice(raw);
-            mask_prefix(&mut address, prefix_len);
-            format!("{}/{}", Ipv6Addr::from(address), prefix_len)
-        } else {
-            let mut address = [0u8; 4];
-            address[..byte_len].copy_from_slice(raw);
-            mask_prefix(&mut address, prefix_len);
-            format!("{}/{}", Ipv4Addr::from(address), prefix_len)
-        };
-
-        let mut route = serde_json::Map::new();
-        route.insert("prefix".to_string(), Value::String(prefix));
-        if let Some(next_hop) = next_hop {
-            route.insert("next_hop".to_string(), Value::String(next_hop.to_string()));
+        let r = PyDict::new_bound(py);
+        r.set_item("prefix", prefix).map_err(|_| ())?;
+        if let Some(nh) = next_hop {
+            r.set_item("next_hop", nh).map_err(|_| ())?;
         }
-        routes.push(Value::Object(route));
+        routes.append(r).map_err(|_| ())?;
     }
-
     Ok(routes)
 }
 
-fn mask_prefix(address: &mut [u8], prefix_len: usize) {
-    let full_bytes = prefix_len / 8;
-    let remaining_bits = prefix_len % 8;
-    if remaining_bits != 0 && full_bytes < address.len() {
-        address[full_bytes] &= 0xff << (8 - remaining_bits);
-    }
-    let zero_from = full_bytes + usize::from(remaining_bits != 0);
-    address[zero_from..].fill(0);
-}
-
-// ── Flowspec NLRI Parser ───────────────────────────────────────────────────
-
-fn parse_nlri_list(payload: &[u8], afi: u16) -> Vec<Value> {
-    let mut routes = Vec::new();
+fn flowspec_routes_py<'py>(
+    py: Python<'py>,
+    payload: &[u8],
+    afi: u16,
+) -> PyResult<Bound<'py, PyList>> {
+    let routes = PyList::empty_bound(py);
     let mut offset = 0;
-
     while offset < payload.len() {
         let first = payload[offset];
-        let nlri_len: usize;
+        let nlri_len;
         if first < 0xF0 {
             nlri_len = first as usize;
             offset += 1;
@@ -690,39 +645,39 @@ fn parse_nlri_list(payload: &[u8], afi: u16) -> Vec<Value> {
             nlri_len = (((first & 0x0F) as usize) << 8) | payload[offset + 1] as usize;
             offset += 2;
         }
-
         if offset + nlri_len > payload.len() {
             break;
         }
-        let raw = &payload[offset..offset + nlri_len];
+        routes.append(flowspec_components_py(
+            py,
+            &payload[offset..offset + nlri_len],
+            afi,
+        )?)?;
         offset += nlri_len;
-
-        let components = parse_nlri_components(raw, afi);
-        routes.push(serde_json::to_value(&components).unwrap());
     }
-    routes
+    Ok(routes)
 }
 
-fn parse_nlri_components(data: &[u8], afi: u16) -> HashMap<String, Value> {
-    let mut components = HashMap::new();
+fn flowspec_components_py<'py>(
+    py: Python<'py>,
+    data: &[u8],
+    afi: u16,
+) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new_bound(py);
     let mut offset = 0;
-
     while offset < data.len() {
         let ftype = data[offset];
         offset += 1;
         let name = component_name(ftype, afi);
-
         if ftype == 1 || ftype == 2 {
-            // Prefix components
-            if let Ok((prefix, new_offset)) = parse_prefix(data, offset, afi) {
-                components.insert(name, Value::String(prefix));
-                offset = new_offset;
+            if let Ok((prefix, next)) = parse_prefix(data, offset, afi) {
+                set_component(&d, name, ftype, prefix)?;
+                offset = next;
             } else {
                 break;
             }
         } else if ftype == 9 || ftype == 12 {
-            // Bitmask components
-            let mut values = Vec::new();
+            let values = PyList::empty_bound(py);
             loop {
                 if offset >= data.len() {
                     break;
@@ -733,17 +688,19 @@ fn parse_nlri_components(data: &[u8], afi: u16) -> HashMap<String, Value> {
                 if offset + length > data.len() {
                     break;
                 }
-                let value = read_be_int(&data[offset..offset + length]);
+                values.append(format_bitmask_value(
+                    ftype,
+                    opname,
+                    read_be_int(&data[offset..offset + length]),
+                ))?;
                 offset += length;
-                values.push(Value::String(format_bitmask_value(ftype, &opname, value)));
                 if end {
                     break;
                 }
             }
-            components.insert(name, Value::Array(values));
+            set_component(&d, name, ftype, values)?;
         } else {
-            // Numeric components
-            let mut values = Vec::new();
+            let values = PyList::empty_bound(py);
             loop {
                 if offset >= data.len() {
                     break;
@@ -754,28 +711,40 @@ fn parse_nlri_components(data: &[u8], afi: u16) -> HashMap<String, Value> {
                 if offset + length > data.len() {
                     break;
                 }
-                let value = read_be_int(&data[offset..offset + length]);
-                offset += length;
-                values.push(Value::String(format!(
+                values.append(format!(
                     "{}{}",
                     sym,
-                    format_numeric_value(ftype, value)
-                )));
+                    format_numeric_value(ftype, read_be_int(&data[offset..offset + length]))
+                ))?;
+                offset += length;
                 if end {
                     break;
                 }
             }
-            components.insert(name, Value::Array(values));
+            set_component(&d, name, ftype, values)?;
         }
     }
-    components
+    Ok(d)
 }
 
-fn component_name(ftype: u8, afi: u16) -> String {
-    if afi == AFI_IPV6 && ftype == 13 {
-        return "flow-label".to_string();
+fn set_component<V: ToPyObject>(
+    d: &Bound<'_, PyDict>,
+    name: Option<&'static str>,
+    ftype: u8,
+    value: V,
+) -> PyResult<()> {
+    if let Some(name) = name {
+        d.set_item(name, value)
+    } else {
+        d.set_item(format!("type{}", ftype), value)
     }
-    let name = match ftype {
+}
+
+fn component_name(ftype: u8, afi: u16) -> Option<&'static str> {
+    if afi == AFI_IPV6 && ftype == 13 {
+        return Some("flow-label");
+    }
+    Some(match ftype {
         1 => "dst-prefix",
         2 => "src-prefix",
         3 => "ip-proto",
@@ -788,9 +757,8 @@ fn component_name(ftype: u8, afi: u16) -> String {
         10 => "pkt-len",
         11 => "dscp",
         12 => "fragment",
-        _ => return format!("type{}", ftype),
-    };
-    name.to_string()
+        _ => return None,
+    })
 }
 
 fn parse_prefix(data: &[u8], mut offset: usize, afi: u16) -> Result<(String, usize), ()> {
@@ -799,74 +767,91 @@ fn parse_prefix(data: &[u8], mut offset: usize, afi: u16) -> Result<(String, usi
     }
     let prefix_len = data[offset] as usize;
     offset += 1;
+    let max_bits = if afi == AFI_IPV6 { 128 } else { 32 };
+    if prefix_len > max_bits {
+        return Err(());
+    }
     let num_bytes = prefix_len.div_ceil(8);
     if offset + num_bytes > data.len() {
         return Err(());
     }
-    let raw = &data[offset..offset + num_bytes];
-    offset += num_bytes;
+    Ok((
+        prefix_string(&data[offset..offset + num_bytes], prefix_len, afi, false)?,
+        offset + num_bytes,
+    ))
+}
 
-    let addr_str = if afi == AFI_IPV6 {
+fn prefix_string(raw: &[u8], prefix_len: usize, afi: u16, mask: bool) -> Result<String, ()> {
+    if afi == AFI_IPV6 {
         let mut buf = [0u8; 16];
-        buf[..num_bytes].copy_from_slice(raw);
-        let ip = Ipv6Addr::from(buf);
-        ip.to_string()
+        buf[..raw.len()].copy_from_slice(raw);
+        if mask {
+            mask_prefix(&mut buf, prefix_len);
+        }
+        Ok(format!("{}/{}", Ipv6Addr::from(buf), prefix_len))
     } else if afi == AFI_IPV4 {
         let mut buf = [0u8; 4];
-        buf[..num_bytes].copy_from_slice(raw);
-        let ip = Ipv4Addr::from(buf);
-        ip.to_string()
+        buf[..raw.len()].copy_from_slice(raw);
+        if mask {
+            mask_prefix(&mut buf, prefix_len);
+        }
+        Ok(format!("{}/{}", Ipv4Addr::from(buf), prefix_len))
     } else {
-        return Err(());
+        Err(())
+    }
+}
+
+fn mask_prefix(address: &mut [u8], prefix_len: usize) {
+    let full_bytes = prefix_len / 8;
+    let remaining_bits = prefix_len % 8;
+    if remaining_bits != 0 && full_bytes < address.len() {
+        address[full_bytes] &= 0xff << (8 - remaining_bits);
+    }
+    let zero_from = full_bytes + usize::from(remaining_bits != 0);
+    address[zero_from..].fill(0);
+}
+
+fn next_hop_string(data: &[u8]) -> String {
+    match data.len() {
+        0 => String::new(),
+        4 => Ipv4Addr::new(data[0], data[1], data[2], data[3]).to_string(),
+        16 => Ipv6Addr::from(<[u8; 16]>::try_from(data).unwrap()).to_string(),
+        32 => format!(
+            "{},{}",
+            Ipv6Addr::from(<[u8; 16]>::try_from(&data[..16]).unwrap()),
+            Ipv6Addr::from(<[u8; 16]>::try_from(&data[16..]).unwrap())
+        ),
+        _ => hex_encode(data),
+    }
+}
+
+fn decode_op(op: u8) -> (bool, usize, &'static str) {
+    let sym = match (op & 0x04 != 0, op & 0x02 != 0, op & 0x01 != 0) {
+        (true, true, true) => "<>=",
+        (true, true, false) => "<>",
+        (true, false, true) => "<=",
+        (true, false, false) => "<",
+        (false, true, true) => ">=",
+        (false, true, false) => ">",
+        (false, false, true) => "=",
+        _ => "?",
     };
-
-    Ok((format!("{}/{}", addr_str, prefix_len), offset))
+    (op & 0x80 != 0, 1 << ((op >> 4) & 0x03), sym)
 }
 
-fn decode_op(op: u8) -> (bool, usize, String) {
-    let end_of_list = (op & 0x80) != 0;
-    let length = 1 << ((op >> 4) & 0x03);
-    let lt = (op & 0x04) != 0;
-    let gt = (op & 0x02) != 0;
-    let eq = (op & 0x01) != 0;
-
-    let mut sym = String::new();
-    if lt {
-        sym.push('<');
-    }
-    if gt {
-        sym.push('>');
-    }
-    if eq {
-        sym.push('=');
-    }
-    if sym.is_empty() {
-        sym.push('?');
-    }
-
-    (end_of_list, length, sym)
-}
-
-fn decode_bitmask_op(op: u8) -> (bool, usize, String) {
-    let end_of_list = (op & 0x80) != 0;
-    let length = 1 << ((op >> 4) & 0x03);
-    let negated = (op & 0x02) != 0;
-    let match_all = (op & 0x01) != 0;
-
-    let opname = if match_all {
-        if negated {
+fn decode_bitmask_op(op: u8) -> (bool, usize, &'static str) {
+    let opname = if op & 0x01 != 0 {
+        if op & 0x02 != 0 {
             "not-all"
         } else {
             "all"
         }
+    } else if op & 0x02 != 0 {
+        "none"
     } else {
-        if negated {
-            "none"
-        } else {
-            "any"
-        }
+        "any"
     };
-    (end_of_list, length, opname.to_string())
+    (op & 0x80 != 0, 1 << ((op >> 4) & 0x03), opname)
 }
 
 fn read_be_int(data: &[u8]) -> u64 {
@@ -879,21 +864,22 @@ fn read_be_int(data: &[u8]) -> u64 {
 
 fn format_numeric_value(ftype: u8, value: u64) -> String {
     if ftype == 3 {
-        let proto = match value {
-            1 => "icmp",
-            2 => "igmp",
-            6 => "tcp",
-            17 => "udp",
-            41 => "ipv6",
-            47 => "gre",
-            50 => "esp",
-            51 => "ah",
-            58 => "icmpv6",
-            89 => "ospf",
-            132 => "sctp",
-            _ => return value.to_string(),
-        };
-        return format!("{}({})", proto, value);
+        if let Some(name) = match value {
+            1 => Some("icmp"),
+            2 => Some("igmp"),
+            6 => Some("tcp"),
+            17 => Some("udp"),
+            41 => Some("ipv6"),
+            47 => Some("gre"),
+            50 => Some("esp"),
+            51 => Some("ah"),
+            58 => Some("icmpv6"),
+            89 => Some("ospf"),
+            132 => Some("sctp"),
+            _ => None,
+        } {
+            return format!("{}({})", name, value);
+        }
     }
     if ftype == 11 {
         return (value & 0x3F).to_string();
@@ -907,16 +893,16 @@ fn format_bitmask_value(ftype: u8, opname: &str, value: u64) -> String {
     } else {
         fragment_flag_names(value)
     };
-    let rendered = if !names.is_empty() {
-        names.join(",")
+    if names.is_empty() {
+        format!("{}(0x{:x})", opname, value)
     } else {
-        format!("0x{:x}", value)
-    };
-    format!("{}({})", opname, rendered)
+        format!("{}({})", opname, names.join(","))
+    }
 }
 
-fn tcp_flag_names(value: u64) -> Vec<String> {
-    let flags = [
+fn tcp_flag_names(value: u64) -> Vec<&'static str> {
+    let mut names = Vec::with_capacity(4);
+    for &(bit, name) in &[
         (0x001, "fin"),
         (0x002, "syn"),
         (0x004, "rst"),
@@ -926,123 +912,126 @@ fn tcp_flag_names(value: u64) -> Vec<String> {
         (0x040, "ece"),
         (0x080, "cwr"),
         (0x100, "ns"),
-    ];
-    let mut names = Vec::new();
-    for &(bit, name) in &flags {
-        if (value & bit) != 0 {
-            names.push(name.to_string());
+    ] {
+        if value & bit != 0 {
+            names.push(name);
         }
     }
     names
 }
 
-fn fragment_flag_names(value: u64) -> Vec<String> {
-    let flags = [
+fn fragment_flag_names(value: u64) -> Vec<&'static str> {
+    let mut names = Vec::with_capacity(2);
+    for &(bit, name) in &[
         (0x01, "df"),
         (0x02, "is-fragment"),
         (0x04, "first-fragment"),
         (0x08, "last-fragment"),
-    ];
-    let mut names = Vec::new();
-    for &(bit, name) in &flags {
-        if (value & bit) != 0 {
-            names.push(name.to_string());
+    ] {
+        if value & bit != 0 {
+            names.push(name);
         }
     }
     names
 }
 
-// ── Extended Community Parsers ──────────────────────────────────────────────
-
 fn parse_ext_communities(data: &[u8]) -> Vec<String> {
-    let mut actions = Vec::new();
-    for chunk in data.chunks_exact(8) {
-        let t = chunk[0];
-        let s = chunk[1];
-
+    let mut actions = Vec::with_capacity(data.len() / 8);
+    for c in data.chunks_exact(8) {
+        let t = c[0];
+        let s = c[1];
         if (t, s) == (0x80, 0x06) {
-            let rate = read_f32(&chunk[4..8]);
+            let rate = read_f32(&c[4..8]);
             actions.push(if rate <= 0.0 {
                 "discard".to_string()
             } else {
                 format!("rate-limit={:.0}bps", rate * 8.0)
             });
         } else if (t, s) == (0x80, 0x0C) {
-            let rate = read_f32(&chunk[4..8]);
+            let rate = read_f32(&c[4..8]);
             actions.push(if rate <= 0.0 {
                 "discard-packets".to_string()
             } else {
                 format!("rate-limit={:.0}pps", rate)
             });
         } else if (t, s) == (0x80, 0x07) {
-            let sample = (chunk[7] & 0x02) != 0;
-            let terminal = (chunk[7] & 0x01) != 0;
             actions.push(format!(
                 "traffic-action(sample={},terminal={})",
-                sample, terminal
+                c[7] & 0x02 != 0,
+                c[7] & 0x01 != 0
             ));
         } else if (t, s) == (0x80, 0x08) {
-            let asn = u16::from_be_bytes([chunk[2], chunk[3]]);
-            let val = u32::from_be_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
-            actions.push(format!("rt-redirect={}:{}", asn, val));
+            actions.push(format!(
+                "rt-redirect={}:{}",
+                u16::from_be_bytes([c[2], c[3]]),
+                u32::from_be_bytes([c[4], c[5], c[6], c[7]])
+            ));
         } else if (t, s) == (0x81, 0x08) {
-            let ip = Ipv4Addr::new(chunk[2], chunk[3], chunk[4], chunk[5]);
-            let val = u16::from_be_bytes([chunk[6], chunk[7]]);
-            actions.push(format!("rt-redirect={}:{}", ip, val));
+            actions.push(format!(
+                "rt-redirect={}:{}",
+                Ipv4Addr::new(c[2], c[3], c[4], c[5]),
+                u16::from_be_bytes([c[6], c[7]])
+            ));
         } else if (t, s) == (0x82, 0x08) {
-            let asn = u32::from_be_bytes([chunk[2], chunk[3], chunk[4], chunk[5]]);
-            let val = u16::from_be_bytes([chunk[6], chunk[7]]);
-            actions.push(format!("rt-redirect={}:{}", asn, val));
+            actions.push(format!(
+                "rt-redirect={}:{}",
+                u32::from_be_bytes([c[2], c[3], c[4], c[5]]),
+                u16::from_be_bytes([c[6], c[7]])
+            ));
         } else if (t, s) == (0x80, 0x09) {
-            actions.push(format!("mark-dscp={}", chunk[7] & 0x3F));
-        } else if (t, s) == (0x01, 0x0C) || (t, s) == (0x80, 0x0b) || (t, s) == (0x08, 0x00) {
-            let ip = Ipv4Addr::new(chunk[2], chunk[3], chunk[4], chunk[5]);
-            let flags = u16::from_be_bytes([chunk[6], chunk[7]]);
-            actions.push(redirect_to_ip_action("ipv4", &ip.to_string(), flags));
+            actions.push(format!("mark-dscp={}", c[7] & 0x3F));
+        } else if (t, s) == (0x01, 0x0C) {
+            actions.push(redirect_to_ip_action(
+                "ipv4",
+                &Ipv4Addr::new(c[2], c[3], c[4], c[5]).to_string(),
+                u16::from_be_bytes([c[6], c[7]]),
+            ));
+        } else if t == 0x08 {
+            actions.push("redirect-to-next-hop".to_string());
+        } else if (t, s) == (0x80, 0x0b) {
+            actions.push(format!(
+                "ec={}(juniper-redirect-to-next-hop)",
+                hex_encode(c)
+            ));
+        } else if [0x80, 0x81, 0x82].contains(&t) {
+            actions.push(format!("unknown-flowspec-ec={}", hex_encode(c)));
         } else {
-            if [0x80, 0x81, 0x82].contains(&t) {
-                actions.push(format!("unknown-flowspec-ec={}", hex_encode(chunk)));
-            } else {
-                actions.push(format!("ec={}", hex_encode(chunk)));
-            }
+            actions.push(format!("ec={}", hex_encode(c)));
         }
     }
     actions
 }
 
 fn parse_ipv6_ext_communities(data: &[u8]) -> Vec<String> {
-    let mut actions = Vec::new();
-    for chunk in data.chunks_exact(20) {
-        let etype = u16::from_be_bytes([chunk[0], chunk[1]]);
+    let mut actions = Vec::with_capacity(data.len() / 20);
+    for c in data.chunks_exact(20) {
+        let etype = u16::from_be_bytes([c[0], c[1]]);
         let ip = Ipv6Addr::from([
-            chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7], chunk[8], chunk[9],
-            chunk[10], chunk[11], chunk[12], chunk[13], chunk[14], chunk[15], chunk[16], chunk[17],
+            c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11], c[12], c[13], c[14],
+            c[15], c[16], c[17],
         ]);
-        let val = u16::from_be_bytes([chunk[18], chunk[19]]);
-
+        let val = u16::from_be_bytes([c[18], c[19]]);
         if etype == 0x000C {
             actions.push(redirect_to_ip_action("ipv6", &ip.to_string(), val));
         } else if etype == 0x000D {
             actions.push(format!("rt-redirect=[{}]:{}", ip, val));
+        } else if (0x000C..=0x0010).contains(&etype) {
+            actions.push(format!("unknown-flowspec-ipv6-ec={}", hex_encode(c)));
         } else {
-            if (0x000C..=0x0010).contains(&etype) {
-                actions.push(format!("unknown-flowspec-ipv6-ec={}", hex_encode(chunk)));
-            } else {
-                actions.push(format!("ipv6-ec={}", hex_encode(chunk)));
-            }
+            actions.push(format!("ipv6-ec={}", hex_encode(c)));
         }
     }
     actions
 }
 
 fn redirect_to_ip_action(family: &str, addr: &str, flags: u16) -> String {
-    let verb = if (flags & 0x0001) != 0 {
+    let verb = if flags & 0x0001 != 0 {
         "copy-to"
     } else {
         "redirect-to"
     };
     let extra = if flags == 0 || flags == 1 {
-        "".to_string()
+        String::new()
     } else {
         format!("(flags=0x{:04x})", flags)
     };
@@ -1052,14 +1041,54 @@ fn redirect_to_ip_action(family: &str, addr: &str, flags: u16) -> String {
     format!("{}-{}={}{}", verb, family, addr, extra)
 }
 
+fn replace_next_hop_markers(actions: &Bound<'_, PyList>, next_hop: &str) -> PyResult<()> {
+    for i in 0..actions.len() {
+        let action: String = actions.get_item(i)?.extract()?;
+        if action == "redirect-to-next-hop" {
+            actions.set_item(i, format!("redirect-to-ipv4={}", next_hop))?;
+        } else if action == "copy-to-next-hop" {
+            actions.set_item(i, format!("copy-to-ipv4={}", next_hop))?;
+        } else if let Some(prefix) = action.strip_suffix("(juniper-redirect-to-next-hop)") {
+            actions.set_item(
+                i,
+                format!("{}(juniper-redirect-to-ipv4={})", prefix, next_hop),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn apply_flowspec_next_hop_actions(
+    actions: &Bound<'_, PyList>,
+    path_attributes: &Bound<'_, PyList>,
+    next_hop: &str,
+) -> PyResult<()> {
+    replace_next_hop_markers(actions, next_hop)?;
+    for i in 0..path_attributes.len() {
+        let attr = path_attributes.get_item(i)?;
+        let attr = attr.downcast::<PyDict>()?;
+        let code: u8 = attr.get_item("code")?.unwrap().extract()?;
+        if code == ATTR_EXT_COMMUNITIES {
+            if let Some(value) = attr.get_item("value")? {
+                replace_next_hop_markers(value.downcast::<PyList>()?, next_hop)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn read_f32(bytes: &[u8]) -> f32 {
-    let mut buf = [0u8; 4];
-    buf.copy_from_slice(bytes);
-    f32::from_be_bytes(buf)
+    f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
 fn hex_encode(data: &[u8]) -> String {
-    data.iter().map(|b| format!("{:02x}", b)).collect()
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(data.len() * 2);
+    for &b in data {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    s
 }
 
 #[cfg(test)]
@@ -1067,33 +1096,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_ipv4_unicast_prefix_and_next_hop() {
-        let routes =
-            parse_unicast_nlri(&[25, 203, 0, 113, 255], AFI_IPV4, Some("192.0.2.1")).unwrap();
-
-        assert_eq!(routes[0]["prefix"], "203.0.113.128/25");
-        assert_eq!(routes[0]["next_hop"], "192.0.2.1");
-    }
-
-    #[test]
-    fn parses_ipv6_unicast_prefix() {
-        let routes =
-            parse_unicast_nlri(&[48, 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x01], AFI_IPV6, None).unwrap();
-
-        assert_eq!(routes[0]["prefix"], "2001:db8:1::/48");
-        assert!(routes[0].get("next_hop").is_none());
-    }
-
-    #[test]
-    fn rejects_truncated_unicast_prefix() {
-        assert!(parse_unicast_nlri(&[24, 203, 0], AFI_IPV4, None).is_err());
+    fn rejects_oversized_flowspec_prefix() {
+        assert!(parse_prefix(&[40, 203, 0, 113, 1, 2], 0, AFI_IPV4).is_err());
     }
 
     #[test]
     fn traffic_rate_bytes_is_rendered_as_bits_per_second() {
         let mut ec = vec![0x80, 0x06, 0x00, 0x00];
         ec.extend_from_slice(&9600.0f32.to_be_bytes());
-
         assert_eq!(parse_ext_communities(&ec), vec!["rate-limit=76800bps"]);
     }
 
@@ -1101,7 +1111,6 @@ mod tests {
     fn traffic_rate_packets_stays_packets_per_second() {
         let mut ec = vec![0x80, 0x0c, 0x00, 0x00];
         ec.extend_from_slice(&9600.0f32.to_be_bytes());
-
         assert_eq!(parse_ext_communities(&ec), vec!["rate-limit=9600pps"]);
     }
 
@@ -1111,7 +1120,6 @@ mod tests {
         bytes_ec.extend_from_slice(&(-1.0f32).to_be_bytes());
         let mut packets_ec = vec![0x80, 0x0c, 0x00, 0x00];
         packets_ec.extend_from_slice(&(-1.0f32).to_be_bytes());
-
         assert_eq!(parse_ext_communities(&bytes_ec), vec!["discard"]);
         assert_eq!(parse_ext_communities(&packets_ec), vec!["discard-packets"]);
     }

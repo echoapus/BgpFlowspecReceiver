@@ -14,7 +14,7 @@ and packet captures in real time via Server-Sent Events.
 - **IPv4 and IPv6 FlowSpec** — all NLRI component types (prefix, port, protocol, TCP flags, DSCP, fragment, flow-label)
 - **IPv4 and IPv6 unicast** — prefix, next hop, AS path, standard/well-known/large communities
 - **All standard FlowSpec actions** — rate-limit in network units (bps/pps), discard, redirect-to-VRF (AS2/IPv4/AS4), redirect-to-IP (IPv4/IPv6), DSCP mark, traffic-action
-- **Unknown-FlowSpec-EC detection** — vendor or future-IANA extended communities in the FlowSpec EC range are flagged distinctly
+- **Unknown-FlowSpec-EC detection** — vendor or future-IANA extended communities in the FlowSpec EC range are flagged distinctly, with Juniper-style redirect next-hop hints annotated when visible
 - **4-byte ASN support** — `AS_TRANS`, `CAP_4BYTE_ASN`, `AS4_PATH` (RFC 6793)
 - **Hold timer enforcement** — session resets if no message arrives within the negotiated hold time
 - **JSON RIB persistence** — debounced atomic file writes after RIB changes (optional)
@@ -34,7 +34,7 @@ and packet captures in real time via Server-Sent Events.
 - Python 3.11+
 - `aiohttp >= 3.9`
 - `tcpdump` on `$PATH` (optional, for packet capture)
-- Rust/Cargo (optional, for the Rust parser)
+- Rust/Cargo and `maturin` (optional, for the Rust PyO3 parser)
 
 ---
 
@@ -215,6 +215,12 @@ bytes/second and rendered as network bits/second. For example, a router rate of
 `0.1Mbps` appears as `rate-limit=100000bps` in JSON and `100Kbps` in the UI.
 `traffic-rate-packets` remains packets/second (`pps`).
 
+Standard redirect actions are decoded from the IANA FlowSpec extended-community
+types. The Juniper-style `0x80:0x0b` extended community is kept as a raw
+community because it overlaps with the registered E-Tree Info subtype; when the
+same UPDATE carries an MP_REACH next-hop, bgpx annotates it as a hint, for
+example `ec=800b000000000000(juniper-redirect-to-ipv4=192.168.1.1)`.
+
 ---
 
 ## Architecture
@@ -230,11 +236,11 @@ bytes/second and rendered as network bits/second. For example, a router rate of
 │   ├── capture.py      tcpdump subprocess wrapper
 │   ├── api.py          aiohttp UI, commands, route pages/export, SSE, health
 │   ├── message/
-│   │   ├── parser.py   Python parser and optional Rust FFI loading
+│   │   ├── parser.py   Python parser and optional Rust PyO3 loading
 │   │   ├── builder.py  OPEN, KEEPALIVE, and NOTIFICATION builders
 │   │   └── flowspec.py FlowSpec NLRI and action parsing
 │   └── web/ui.html     Single-file vanilla JavaScript UI
-├── bgpx_rust/          Optional Rust parser
+├── bgpx_rust/          Optional Rust PyO3 parser
 ├── deploy.sh           Host deployment
 ├── uninstall.sh        Host uninstall
 └── test.sh             Full Python/Rust test matrix
@@ -279,16 +285,18 @@ pytest
 ```
 
 Tests cover message parsing, IPv4/IPv6 Unicast, FlowSpec NLRI/actions, RIB,
-session dispatch, package data, and the Python/Rust FFI paths.
+session dispatch, package data, and the Python/Rust PyO3 paths.
 
-Run the full Python fallback + Rust FFI test matrix:
+Run the full Python fallback + Rust PyO3 test matrix:
 
 ```bash
 ./test.sh
 ```
 
-`test.sh` requires Cargo with cached/downloadable Rust dependencies. Node.js is
-optional; when present, the script also checks the embedded Web UI JavaScript.
+`test.sh` requires Cargo and `maturin` with cached/downloadable Rust
+dependencies. The Rust wheel is installed into a temporary target directory for
+the test run, not into the active Python environment. Node.js is optional; when
+present, the script also checks the embedded Web UI JavaScript.
 
 ---
 

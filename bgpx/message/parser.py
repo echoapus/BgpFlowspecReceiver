@@ -1,9 +1,6 @@
 """Parse incoming BGP messages (RFC 4271)."""
 
-import ctypes
 import ipaddress
-import json
-import os
 import socket
 import struct
 
@@ -21,30 +18,13 @@ from bgpx.message.flowspec import (
     parse_nlri_list, parse_ext_communities, parse_ipv6_ext_communities,
 )
 
-# ponytail: load Rust parser library if available, with transparent fallback
-_lib = None
-_lib_path = os.path.join(os.path.dirname(__file__), "libbgpx_rust.so")
-if os.path.exists(_lib_path):
-    try:
-        _lib = ctypes.CDLL(_lib_path)
-        _lib.parse_header_rust.argtypes = [
-            ctypes.c_void_p, ctypes.c_size_t,
-            ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint32)
-        ]
-        _lib.parse_header_rust.restype = ctypes.c_int32
-
-        _lib.parse_open_rust.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
-        _lib.parse_open_rust.restype = ctypes.c_void_p
-
-        _lib.parse_update_details_rust.argtypes = [
-            ctypes.c_void_p, ctypes.c_size_t, ctypes.c_size_t,
-        ]
-        _lib.parse_update_details_rust.restype = ctypes.c_void_p
-
-        _lib.free_string.argtypes = [ctypes.c_void_p]
-        _lib.free_string.restype = None
-    except Exception:
-        _lib = None
+# ponytail: import PyO3 native extension if available, transparent Python fallback
+try:
+    import bgpx_rust as _rust
+    if not hasattr(_rust, "parse_header"):   # source-tree namespace, not compiled .so
+        _rust = None
+except ImportError:
+    _rust = None
 
 
 PATH_ATTR_NAMES = {
@@ -83,18 +63,8 @@ AS_PATH_SEGMENT_NAMES = {
 
 def parse_header(data: bytes) -> tuple[int, int]:
     """Return (msg_type, body_length). Raise ValueError on invalid marker."""
-    if _lib is not None:
-        msg_type = ctypes.c_uint8(0)
-        body_length = ctypes.c_uint32(0)
-        res = _lib.parse_header_rust(data, len(data), ctypes.byref(msg_type), ctypes.byref(body_length))
-        if res == 0:
-            return int(msg_type.value), int(body_length.value)
-        elif res == -1:
-            raise ValueError("Header too short")
-        elif res == -2:
-            raise ValueError("Invalid BGP marker")
-        elif res == -3:
-            raise ValueError(f"BGP message length below minimum 19")
+    if _rust is not None:
+        return _rust.parse_header(data)
 
     if len(data) < BGP_HEADER_LEN:
         raise ValueError("Header too short")
@@ -108,10 +78,8 @@ def parse_header(data: bytes) -> tuple[int, int]:
 
 def parse_open(body: bytes) -> dict:
     """Parse a BGP OPEN message body and return a dict with peer info."""
-    if _lib is not None:
-        parsed = _rust_json(_lib.parse_open_rust(body, len(body)))
-        if parsed is not None:
-            return parsed
+    if _rust is not None:
+        return _rust.parse_open(body)
 
     version = body[0]
     peer_as = struct.unpack("!H", body[1:3])[0]
@@ -165,12 +133,8 @@ def parse_update(body: bytes) -> tuple[dict, dict, list]:
 
 def parse_update_details(body: bytes, asn_len: int = 2) -> dict:
     """Parse a BGP UPDATE and retain decoded/raw path-attribute metadata."""
-    if _lib is not None:
-        parsed = _rust_json(
-            _lib.parse_update_details_rust(body, len(body), asn_len)
-        )
-        if parsed is not None:
-            return parsed
+    if _rust is not None:
+        return _rust.parse_update_details(body, asn_len)
 
     offset = 0
 
@@ -233,6 +197,9 @@ def parse_update_details(body: bytes, asn_len: int = 2) -> dict:
                 nlri_start = 4 + nh_len + 1
                 if nlri_start > len(abody):
                     raise ValueError("MP_REACH next-hop exceeds attribute length")
+                next_hop = _format_next_hop(abody[4:4 + nh_len])
+                if next_hop:
+                    _apply_flowspec_next_hop_actions(actions, next_hop, path_attributes)
                 label      = "ipv6-flowspec" if afi == AFI_IPV6 else "ipv4-flowspec"
                 announce[label] = parse_nlri_list(abody[nlri_start:], afi)
             elif safi == 1 and afi in (AFI_IPV4, AFI_IPV6):
@@ -295,13 +262,6 @@ def parse_update_details(body: bytes, asn_len: int = 2) -> dict:
     }
 
 
-def _rust_json(ptr) -> dict | None:
-    if not ptr:
-        return None
-    try:
-        return json.loads(ctypes.string_at(ptr).decode("utf-8"))
-    finally:
-        _lib.free_string(ptr)
 
 
 def _parse_unicast_nlri(payload: bytes, afi: int) -> list[str]:
@@ -325,6 +285,27 @@ def _parse_unicast_nlri(payload: bytes, afi: int) -> list[str]:
         prefixes.append(str(ipaddress.ip_network(f"{address}/{prefix_len}", strict=False)))
 
     return prefixes
+
+
+def _apply_flowspec_next_hop_actions(
+    actions: list, next_hop: str, path_attributes: list[dict]
+) -> None:
+    def replace(values: list) -> None:
+        for i, action in enumerate(values):
+            if action == "redirect-to-next-hop":
+                values[i] = f"redirect-to-ipv4={next_hop}"
+            elif action == "copy-to-next-hop":
+                values[i] = f"copy-to-ipv4={next_hop}"
+            elif action.endswith("(juniper-redirect-to-next-hop)"):
+                values[i] = (
+                    action[:-len("(juniper-redirect-to-next-hop)")] +
+                    f"(juniper-redirect-to-ipv4={next_hop})"
+                )
+
+    replace(actions)
+    for attribute in path_attributes:
+        if attribute["code"] == ATTR_EXT_COMMUNITIES and isinstance(attribute.get("value"), list):
+            replace(attribute["value"])
 
 
 def _decode_path_attribute(
