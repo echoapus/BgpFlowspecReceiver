@@ -4,45 +4,60 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>bgpx — BGP Unicast and FlowSpec Receiver</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 /* ── Reset & Base ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg0:       #2c2f2e;
-  --bg1:       #353836;
-  --bg2:       #404342;
-  --bg3:       #4a4d4b;
-  --border:    #585b59;
-  --text:      #f1ede7;
-  --text2:     #c6c0b8;
-  --text3:     #918b83;
-  --accent:    #8ea29b;
-  --green:     #8ca08a;
-  --yellow:    #b7a06d;
-  --red:       #b58d87;
-  --orange:    #c09a7f;
-  --purple:    #a99caf;
+  --bg0:       #0f172a;
+  --bg1:       #1e293b;
+  --bg2:       #334155;
+  --bg3:       #475569;
+  --border:    #334155;
+  --text:      #f8fafc;
+  --text2:     #cbd5e1;
+  --text3:     #64748b;
+  --accent:    #38bdf8;
+  --green:     #34d399;
+  --yellow:    #fbbf24;
+  --red:       #f87171;
+  --orange:    #fb923c;
+  --purple:    #c084fc;
+  --green-bg:  rgba(52, 211, 153, 0.15);
+  --yellow-bg: rgba(251, 191, 36, 0.15);
+  --red-bg:    rgba(248, 113, 113, 0.15);
+  --orange-bg: rgba(251, 146, 60, 0.15);
+  --purple-bg: rgba(192, 132, 252, 0.15);
+  --accent-bg: rgba(56, 189, 248, 0.15);
   --mono:      "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
 }
 html.light-theme {
-  --bg0:       #f3eee7;
-  --bg1:       #ebe4db;
-  --bg2:       #e2dbd1;
-  --bg3:       #d2c9be;
-  --border:    #c8beb3;
-  --text:      #3f3934;
-  --text2:     #6f6760;
-  --text3:     #9a9289;
-  --accent:    #7f938d;
-  --green:     #869a84;
-  --yellow:    #b59f70;
-  --red:       #b48d87;
-  --orange:    #bf997d;
-  --purple:    #9e91a7;
+  --bg0:       #f8fafc;
+  --bg1:       #ffffff;
+  --bg2:       #f1f5f9;
+  --bg3:       #e2e8f0;
+  --border:    #e2e8f0;
+  --text:      #0f172a;
+  --text2:     #475569;
+  --text3:     #94a3b8;
+  --accent:    #0ea5e9;
+  --green:     #10b981;
+  --yellow:    #d97706;
+  --red:       #ef4444;
+  --orange:    #ea580c;
+  --purple:    #8b5cf6;
+  --green-bg:  rgba(16, 185, 129, 0.12);
+  --yellow-bg: rgba(217, 119, 6, 0.12);
+  --red-bg:    rgba(239, 68, 68, 0.12);
+  --orange-bg: rgba(234, 88, 12, 0.12);
+  --purple-bg: rgba(139, 92, 246, 0.12);
+  --accent-bg: rgba(14, 165, 233, 0.12);
 }
 html, body { height: 100%; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg0);
   color: var(--text);
   font-size: 13px;
@@ -150,10 +165,10 @@ body {
 }
 .sidebar-section h3 {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--text2);
+  letter-spacing: 1.5px;
+  color: var(--accent);
   margin-bottom: 12px;
 }
 
@@ -175,9 +190,9 @@ body {
   font-family: var(--mono);
   font-size: 12px;
   outline: none;
-  transition: border-color .2s;
+  transition: all .2s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.field input:focus  { border-color: var(--accent); }
+.field input:focus  { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
 .field input:disabled { opacity: .5; cursor: not-allowed; }
 .field input.invalid { border-color: var(--red); }
 
@@ -194,7 +209,7 @@ body {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: all .15s;
+  transition: all .2s cubic-bezier(0.4, 0, 0.2, 1);
   margin-bottom: 6px;
 }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
@@ -203,13 +218,13 @@ body {
   color: var(--bg0);
   border-color: var(--green);
 }
-.btn-start:hover:not(:disabled) { filter: brightness(1.05); }
+.btn-start:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 12px var(--green-bg); filter: brightness(1.05); }
 .btn-stop {
   background: transparent;
   color: var(--red);
   border-color: var(--red);
 }
-.btn-stop:hover:not(:disabled) { background: rgba(181,141,135,.14); }
+.btn-stop:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 12px var(--red-bg); background: var(--red-bg); }
 
 /* ── Stats ── */
 .stat-row {
@@ -298,7 +313,7 @@ body {
   min-width: 18px;
   text-align: center;
 }
-.tab-btn.active .tab-count { background: rgba(142,162,155,.16); color: var(--accent); }
+.tab-btn.active .tab-count { background: var(--accent-bg); color: var(--accent); }
 
 .tab-spacer { flex: 1; }
 .icon-btn {
@@ -318,8 +333,8 @@ body {
   color: var(--orange);
   animation: pulse .8s infinite;
 }
-.badge-capture { background: rgba(192,154,127,.16); color: var(--orange); }
-.badge-packet  { background: rgba(142,162,155,.16); color: var(--accent); }
+.badge-capture { background: var(--orange-bg); color: var(--orange); }
+.badge-packet  { background: var(--accent-bg); color: var(--accent); }
 
 /* ── Tab content ── */
 .tab-content { display: none; flex: 1; overflow: hidden; }
@@ -349,7 +364,7 @@ body {
   font-family: var(--mono);
 }
 .filter-chip:hover { border-color: var(--text2); color: var(--text); }
-.filter-chip.active { background: rgba(142,162,155,.14); border-color: var(--accent); color: var(--accent); }
+.filter-chip.active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
 .filter-label { font-size: 11px; color: var(--text3); margin-right: 2px; }
 
 /* ── Routes table ── */
@@ -392,7 +407,7 @@ body {
 }
 /* Row flash on update */
 @keyframes rowFlash {
-  0%   { background: rgba(183,160,109,.18); }
+  0%   { background: var(--yellow-bg); }
   100% { background: transparent; }
 }
 .row-flash td { animation: rowFlash .8s ease-out; }
@@ -411,8 +426,8 @@ body {
   font-size: 10px;
   font-weight: 700;
 }
-.afi-badge.ipv4 { background: rgba(142,162,155,.16); color: var(--accent); }
-.afi-badge.ipv6 { background: rgba(169,156,175,.16); color: var(--purple); }
+.afi-badge.ipv4 { background: var(--accent-bg); color: var(--accent); }
+.afi-badge.ipv6 { background: var(--purple-bg); color: var(--purple); }
 
 .match-cell { font-family: var(--mono); font-size: 11px; }
 .match-inner { overflow: hidden; max-height: 5.4em; position: relative; } /* ponytail: 3 items * 1.8 line-height */
@@ -438,11 +453,11 @@ body {
   margin: 2px 2px 2px 0;
   white-space: nowrap;
 }
-.action-discard     { background: rgba(181,141,135,.16); color: var(--red);    }
-.action-rate-limit  { background: rgba(183,160,109,.16); color: var(--yellow); }
-.action-redirect    { background: rgba(140,160,138,.16); color: var(--green);  }
-.action-mark        { background: rgba(169,156,175,.16); color: var(--purple); }
-.action-unknown-ec  { background: rgba(183,160,109,.2);  color: var(--yellow); border: 1px solid rgba(183,160,109,.34); }
+.action-discard     { background: var(--red-bg); color: var(--red);    }
+.action-rate-limit  { background: var(--yellow-bg); color: var(--yellow); }
+.action-redirect    { background: var(--green-bg); color: var(--green);  }
+.action-mark        { background: var(--purple-bg); color: var(--purple); }
+.action-unknown-ec  { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--border); }
 .action-other       { background: var(--bg3);           color: var(--text2);  }
 
 .ts-cell {
@@ -506,11 +521,11 @@ body {
   flex-shrink: 0;
   text-transform: uppercase;
 }
-.badge-session  { background: rgba(140,160,138,.16); color: var(--green);  }
-.badge-announce { background: rgba(142,162,155,.16); color: var(--accent); }
-.badge-withdraw { background: rgba(192,154,127,.16); color: var(--orange); }
-.badge-error    { background: rgba(181,141,135,.16); color: var(--red);    }
-.badge-warning  { background: rgba(183,160,109,.16); color: var(--yellow); }
+.badge-session  { background: var(--green-bg); color: var(--green);  }
+.badge-announce { background: var(--accent-bg); color: var(--accent); }
+.badge-withdraw { background: var(--orange-bg); color: var(--orange); }
+.badge-error    { background: var(--red-bg); color: var(--red);    }
+.badge-warning  { background: var(--yellow-bg); color: var(--yellow); }
 
 .log-msg { color: var(--text); flex: 1; word-break: break-all; }
 .log-detail {
