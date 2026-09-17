@@ -149,14 +149,35 @@ Header indicators:
 
 ## RFC coverage
 
-| RFC | Scope | Status |
-|---|---|---|
-| RFC 4271 | BGP-4 / IPv4 Unicast | FSM, timers, UPDATE, IPv4 unicast ✅ |
-| RFC 4360 | Extended Communities | ✅ |
-| RFC 4760 | MP-BGP / IPv6 Unicast | ✅ |
-| RFC 6793 | 4-Byte ASN | OPEN capability, AS_PATH, AS4_PATH ✅ |
-| RFC 8955 | IPv4 FlowSpec | All component types and actions ✅ |
-| RFC 8956 | IPv6 FlowSpec | All component types and actions ✅ |
+### Supported & Partially Supported RFCs
+
+| RFC | Scope | Status | Notes / Limitations |
+|---|---|---|---|
+| RFC 4271 | BGP-4 / IPv4 Unicast | 🟡 Partial | Receiver-only; FSM, timers, OPEN/UPDATE/KEEPALIVE, IPv4 unicast NLRI. **Unimplemented**: Outbound UPDATE origination, standard outbound NOTIFICATION generation on parse error, BGP over IPv6 transport, best-path selection algorithm across multiple peers. |
+| RFC 1997 | BGP Communities | ✅ Full | Standard communities (`ASN:val`) and well-known communities (`NO_EXPORT`, `NO_ADVERTISE`, `NO_EXPORT_SUBCONFED`, `NOPEER`). |
+| RFC 4360 | Extended Communities | ✅ Full | 2-octet/4-octet/IPv4-specific extended communities and FlowSpec actions (rate-limit, redirect to VRF, etc.). |
+| RFC 4760 | MP-BGP | 🟡 Partial | Capability 1, `MP_REACH_NLRI` / `MP_UNREACH_NLRI` for AFI 1/2 and SAFI 1/133. **Unimplemented**: Other SAFIs (e.g. SAFI 128 L3VPN, SAFI 4 MPLS, SAFI 2 Multicast, SAFI 134 FlowSpec VPN). |
+| RFC 5492 | Capabilities Advertisement | ✅ Full | Optional Parameter Type 2 in OPEN message. |
+| RFC 5701 | IPv6 Specific Ext. Communities | ✅ Full | Type 25 extended communities (e.g. IPv6 FlowSpec redirect actions). |
+| RFC 6793 | 4-Byte ASN | ✅ Full | Capability 65, `AS_TRANS`, 4-octet `AS_PATH`, `AS4_PATH` merging, `AS4_AGGREGATOR`. |
+| RFC 7606 | Revised UPDATE Error Handling | 🟡 Partial | Attribute discard / preservation of raw hex on malformed attributes without session drop. **Unimplemented**: Full formal treat-as-withdraw state machine. |
+| RFC 8092 | BGP Large Communities | ✅ Full | 12-octet large communities (`admin:data1:data2`). |
+| RFC 8955 | IPv4 FlowSpec | 🟡 Partial | All component types (1–12) and actions (rate-limit bps/pps, discard, redirect to VRF/IP, DSCP mark, sample/terminal). **Unimplemented**: Strict ascending component ordering check (Section 5.1), FlowSpec route validation against unicast RIB (Section 6), explicit AND/OR operator grouping in UI. |
+| RFC 8956 | IPv6 FlowSpec | 🟡 Partial | Component types 1–13 (including flow-label) and IPv6 redirect actions. **Unimplemented**: Prefix offset octet (Section 3.2; currently decodes `[length][prefix]`, offset $\ne 0$ is unsupported). |
+| RFC 9184 | FlowSpec Redirect to IP | ✅ Full | Redirect-to-IP / copy-to-IP extended communities (`0x010C` / `0x000C`). |
+
+### Out-of-Scope / Not Implemented RFCs
+
+| RFC | Name | Status | Reason / Operational Impact |
+|---|---|---|---|
+| RFC 2918 | Route Refresh Capability | ❌ Not implemented | ROUTE-REFRESH message (Type 5) not supported; requires session re-establishment for RIB refresh. |
+| RFC 4724 | Graceful Restart Mechanism | ❌ Not implemented | Capability 64 not advertised; routes are purged immediately upon session termination. |
+| RFC 7911 | Advertisement of Multiple Paths (ADD-PATH) | ❌ Not implemented | Path Identifier prefix in NLRI not supported; expects single path per prefix. |
+| RFC 8654 | Extended Message Support (64K BGP messages) | ❌ Not implemented | Max message size strictly capped at 4,096 bytes per RFC 4271. |
+| RFC 5065 | Autonomous System Confederations | ❌ Not implemented | Confederation segment types parsed if present, but confederation peering/loop detection logic is omitted. |
+| RFC 2385 / 5925 | TCP MD5 Signature / TCP-AO | ❌ Not implemented | TCP authentication options not supported at the socket layer. |
+| RFC 7999 | BLACKHOLE Community | ❌ Not implemented | Community `65535:666` parsed as generic community rather than named action. |
+| RFC 8212 | EBGP Route Propagation without Policies | ❌ Not implemented | No inbound route policy / filtering engine implemented. |
 
 ---
 
