@@ -1,0 +1,26 @@
+[package]
+name = "bgpx"
+version = "26.181.0"
+edition = "2021"
+license-file = "LICENSE"
+description = "BGP Unicast and FlowSpec receiver with an embedded web UI"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time", "sync", "signal", "process"] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+sha1 = "0.10"
+async-stream = "0.3"
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
+[[bin]]
+name = "bgpx"
+path = "src/main.rs"

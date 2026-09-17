@@ -1,13 +1,18 @@
 # bgpx
 
-BGP Unicast and FlowSpec receiver with a live web UI — version 26.181.  
+BGP Unicast and FlowSpec receiver with a live web UI — native Rust edition, version 26.181.0.
 Connects to a peer router, maintains an in-memory RIB, and streams everything to the browser via Server-Sent Events.
 
 ```bash
-pip install bgpx
+cargo install --path . --locked
 bgpx --local-as 65001 --router-id 192.0.2.2 --peer-ip 192.0.2.1 --peer-as 65000
 # open http://localhost:8080
 ```
+
+The `bgpx` binary embeds the existing web UI and runs BGP, RIB, HTTP and SSE
+directly in Rust. Python and PyO3 are not required at runtime. `tcpdump` is
+optional and required only for packet capture. The legacy Python/PyO3 backend
+has been removed. Its parser outputs are preserved as Rust regression fixtures.
 
 > **BGP session is IPv4-only.** `--peer-ip` and `--router-id` must be IPv4 addresses.  
 > Routes received over that session can be IPv4 or IPv6, unicast or FlowSpec.
@@ -60,10 +65,11 @@ docker run --rm -p 179:179 -p 8080:8080 bgpx
 | `--router-id` | — | Local BGP router-id (IPv4) |
 | `--peer-ip` | — | BGP peer IP (IPv4) |
 | `--peer-as` | — | BGP peer AS number |
-| `--hold-time` | `90` | Hold time in seconds (`0` = disabled) |
+| `--hold-time` | `90` | Hold time in seconds (`0` = disabled, otherwise at least `3`) |
 | `--reconnect-delay` | `5` | Seconds before reconnecting after a drop |
 | `--connect-timeout` | `5.0` | TCP connect timeout |
 | `--active-retry-delay` | `1.0` | Delay between active connect attempts |
+| `--listen-port` | `179` | Passive BGP listener port |
 | `--json-output` | — | Write RIB to this file after each change burst |
 | `--host` | `0.0.0.0` | Web UI listen address |
 | `--port` | `8080` | Web UI listen port |
@@ -71,7 +77,7 @@ docker run --rm -p 179:179 -p 8080:8080 bgpx
 
 > **Port 179** requires root or:
 > ```bash
-> sudo setcap cap_net_bind_service+ep $(readlink -f $(which python3))
+> sudo setcap cap_net_bind_service+ep "$(readlink -f "$(command -v bgpx)")"
 > ```
 
 ---
@@ -151,19 +157,14 @@ Header indicators:
 ## Architecture
 
 ```
-bgpx/
-├── cli.py          entry point, component wiring
-├── manager.py      session start / stop / restart
-├── session.py      BGP FSM, UPDATE dispatch
-├── rib.py          unicast + FlowSpec RIB, stats, pagination, JSON persistence
-├── events.py       event history, SSE fan-out
-├── capture.py      tcpdump subprocess wrapper
-├── api.py          aiohttp routes, SSE, health endpoint
-├── message/
-│   ├── parser.py   BGP message parser (+ optional Rust PyO3 fast path)
-│   ├── builder.py  OPEN / KEEPALIVE / NOTIFICATION builders
-│   └── flowspec.py FlowSpec NLRI and extended-community parsing
-└── web/ui.html     single-file vanilla JS web UI
+src/
+├── main.rs         CLI, HTTP listener, shutdown and persistence worker
+├── session.rs      Tokio BGP connections, FSM, timers and UPDATE dispatch
+├── app.rs          RIB, analytics, HTTP routes and SSE history
+├── capture.rs      tcpdump lifecycle and packet events
+├── wire.rs         native BGP parsing and message building
+└── wire_helpers.rs existing Rust FlowSpec decoding helpers
+web/ui.html         embedded single-file vanilla JS web UI
 ```
 
 ---
@@ -171,9 +172,11 @@ bgpx/
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-pytest                  # 68 tests, pure Python
-./test.sh               # Python + Rust PyO3 matrix (requires Cargo + maturin)
+cargo build --locked --release
+cargo test --locked
+./test.sh               # fmt, Clippy, native tests, shell/JS checks
+# cargo test includes 324 parser compatibility fixtures.
+# Python 3 is optional for the standalone HTTP/SSE smoke test.
 ```
 
 ---

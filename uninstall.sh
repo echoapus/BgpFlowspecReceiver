@@ -2,7 +2,10 @@
 set -Eeuo pipefail
 
 APP_NAME="bgpx"
-INSTALL_DIR="${INSTALL_DIR:-/opt/bgpx}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_DIR=/opt/bgpx
+[[ ! -f "${SCRIPT_DIR}/.bgpx-install" ]] || DEFAULT_DIR="${SCRIPT_DIR}"
+INSTALL_DIR="${INSTALL_DIR:-${DEFAULT_DIR}}"
 BIN_LINK="/usr/local/bin/${APP_NAME}"
 SERVICE_NAME="${APP_NAME}.service"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
@@ -16,7 +19,7 @@ Usage: ./uninstall.sh [options]
 Remove a bgpx installation created by deploy.sh.
 
 Options:
-  --install-dir DIR   Install location to remove (default: /opt/bgpx)
+  --install-dir DIR   Install location (default: this installation, or /opt/bgpx)
   --force             Do not prompt for confirmation
   --keep-data         Keep the install directory; remove service and command link only
   -h, --help          Show this help
@@ -43,25 +46,28 @@ confirm() {
 }
 
 require_safe_install_dir() {
-  INSTALL_DIR="${INSTALL_DIR%/}"
+  [[ -n "${INSTALL_DIR}" ]] || { echo "Install directory cannot be empty" >&2; exit 1; }
+  INSTALL_DIR="$(realpath -m -- "${INSTALL_DIR}")"
   case "${INSTALL_DIR}" in
-    ""|"/"|"/opt"|"/usr"|"/var"|"/home")
+    /|/opt|/usr|/usr/bin|/usr/sbin|/usr/lib|/usr/lib64|/usr/local|/usr/local/bin|/var|/home|/root|/tmp|/etc|/bin|/sbin|/lib|/lib64|/boot|/dev|/proc|/sys|/run)
       echo "Refusing unsafe install dir: ${INSTALL_DIR:-<empty>}" >&2
       exit 1
       ;;
   esac
+  if [[ -e "${INSTALL_DIR}" ]] && ! grep -qx 'bgpx-native-v1' "${INSTALL_DIR}/.bgpx-install" 2>/dev/null; then
+    echo "Unrecognized installation: ${INSTALL_DIR}. Run the current deploy.sh first." >&2
+    exit 1
+  fi
 }
 
 remove_service() {
-  if [[ ! -f "${SERVICE_FILE}" ]]; then
-    echo "Systemd unit:      not found"
+  if [[ "${OWN_SERVICE}" -ne 1 ]]; then
+    echo "Systemd unit:      not owned by this installation; kept"
     return
   fi
 
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl stop "${SERVICE_NAME}" >/dev/null 2>&1 || true
-    systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
-  fi
+  systemctl stop "${SERVICE_NAME}"
+  systemctl disable "${SERVICE_NAME}"
 
   rm -f "${SERVICE_FILE}"
 
@@ -84,9 +90,9 @@ remove_bin_link() {
   fi
 
   local target
-  target="$(readlink -f "${BIN_LINK}")"
+  target="$(realpath -m -- "${BIN_LINK}")"
   case "${target}" in
-    "${INSTALL_DIR}"/*)
+    "${INSTALL_DIR}/bin/bgpx"|"${INSTALL_DIR}/venv/bin/bgpx")
       rm -f "${BIN_LINK}"
       echo "Command link:      removed ${BIN_LINK}"
       ;;
@@ -124,9 +130,23 @@ done
 
 require_safe_install_dir
 
-if [[ "${EUID}" -ne 0 && ( -f "${SERVICE_FILE}" || "${INSTALL_DIR}" == /opt* || -e "${BIN_LINK}" || -L "${BIN_LINK}" ) ]]; then
+OWN_SERVICE=0
+if [[ -f "${SERVICE_FILE}" ]]; then
+  while IFS= read -r line; do
+    if [[ "${line}" == "# bgpx-install-dir: ${INSTALL_DIR}" || "${line}" == "ExecStart=${INSTALL_DIR}/venv/bin/bgpx "* ]]; then OWN_SERVICE=1; fi
+  done <"${SERVICE_FILE}"
+fi
+OWN_LINK=0
+if [[ -L "${BIN_LINK}" ]]; then
+  target="$(realpath -m -- "${BIN_LINK}")"
+  [[ "${target}" != "${INSTALL_DIR}/bin/bgpx" && "${target}" != "${INSTALL_DIR}/venv/bin/bgpx" ]] || OWN_LINK=1
+fi
+if [[ "${EUID}" -ne 0 && ( "${OWN_SERVICE}" -eq 1 || "${OWN_LINK}" -eq 1 ) ]]; then
   echo "Uninstalling system paths requires root. Re-run with sudo or choose --install-dir." >&2
   exit 1
+fi
+if [[ "${OWN_SERVICE}" -eq 1 ]]; then
+  command -v systemctl >/dev/null || { echo "systemctl is required to stop this installation" >&2; exit 1; }
 fi
 
 echo "Uninstall plan"

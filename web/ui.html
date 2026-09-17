@@ -1574,10 +1574,6 @@ function setFormDisabled(disabled) {
 }
 
 // ── localStorage config persistence ───────────────────────────────────────
-const _FORM_KEYS = ['f-local-as','f-router-id','f-peer-ip','f-peer-as',
-                    'f-hold-time','f-reconnect','f-connect-timeout',
-                    'f-active-retry','f-json-output','f-listen-port'];
-
 function saveForm(config) {
   try { localStorage.setItem('bgpx-config', JSON.stringify(config)); } catch (_) {}
 }
