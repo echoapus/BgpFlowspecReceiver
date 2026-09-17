@@ -6,6 +6,20 @@ use clap::Parser;
 use serde_json::json;
 use std::{net::IpAddr, time::Duration};
 
+// glibc's malloc keeps freed RIB memory in its own free list for reuse instead of returning
+// it to the OS, so RSS stays at its high-water mark after a burst of withdraws. malloc_trim
+// asks it to actually give unused pages back.
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    fn malloc_trim(pad: usize) -> i32;
+}
+#[cfg(target_os = "linux")]
+fn trim_heap() {
+    unsafe { malloc_trim(0) };
+}
+#[cfg(not(target_os = "linux"))]
+fn trim_heap() {}
+
 #[derive(Parser)]
 #[command(
     version,
@@ -76,12 +90,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let persistence = tokio::spawn({
         let app = app.clone();
         async move {
+            let mut tick: u32 = 0;
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
+                tick += 1;
                 let app = app.clone();
                 let _ = tokio::task::spawn_blocking(move || {
                     if let Err(e) = app.flush(false) {
                         app.emit("error", "error", e, json!({}));
+                    }
+                    // ponytail: fixed 30s cadence rather than triggering off withdraw volume;
+                    // malloc_trim isn't free to call, and a flat timer is simpler than tracking
+                    // how much was freed since the last trim.
+                    if tick % 30 == 0 {
+                        trim_heap();
                     }
                 })
                 .await;
