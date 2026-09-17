@@ -174,6 +174,8 @@ async fn search_longest_prefix_match() {
     assert_eq!(res["match"], true);
     assert_eq!(res["length"], 25);
     assert_eq!(res["route"]["prefix"], "203.0.113.128/25");
+    assert_eq!(res["route"]["peer"], "192.0.2.1");
+    assert_eq!(res["route"]["afi"], "ipv4-unicast");
 
     let (_, res) = request(api.clone(), "/routes/search?ip=203.0.113.10").await;
     assert_eq!(res["match"], true);

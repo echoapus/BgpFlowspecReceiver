@@ -63,8 +63,8 @@ pub struct App {
 pub struct Route {
     pub id: String,
     pub family: &'static str,
-    pub afi: String,
-    pub peer: String,
+    pub afi: Arc<str>,
+    pub peer: Arc<str>,
     pub received_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prefix: Option<String>,
@@ -84,15 +84,17 @@ fn slice_is_empty<T>(v: &Arc<[T]>) -> bool {
 }
 
 // Full tables reuse the same AS_PATH / communities across huge numbers of prefixes (same
-// upstream, same policy tag). Interning them means routes that share content share the
-// allocation too, instead of each of 900k+ rows carrying its own copy.
-// ponytail: interned entries are never evicted; the number of *distinct* AS_PATHs/community
-// sets on a real table is in the thousands, not millions, so this stays small regardless of
-// RIB size. Data::clear() resets it between sessions.
+// upstream, same policy tag), and peer/afi are drawn from a handful of distinct values (one
+// peer, a few AFI/SAFI combos) repeated across every row. Interning them means routes that
+// share content share the allocation too, instead of each of 900k+ rows carrying its own copy.
+// ponytail: interned entries are never evicted; the number of distinct values on a real table
+// is in the thousands at most, not millions, so this stays small regardless of RIB size.
+// Data::clear() resets it between sessions.
 #[derive(Default)]
 struct Pool {
     as_path: HashSet<Arc<[u32]>>,
     communities: HashSet<Arc<[String]>>,
+    strings: HashSet<Arc<str>>,
 }
 impl Pool {
     fn intern_as_path(&mut self, v: Vec<u32>) -> Arc<[u32]> {
@@ -111,9 +113,18 @@ impl Pool {
         self.communities.insert(arc.clone());
         arc
     }
+    fn intern_str(&mut self, v: &str) -> Arc<str> {
+        if let Some(existing) = self.strings.get(v) {
+            return existing.clone();
+        }
+        let arc: Arc<str> = Arc::from(v);
+        self.strings.insert(arc.clone());
+        arc
+    }
     fn clear(&mut self) {
         self.as_path.clear();
         self.communities.clear();
+        self.strings.clear();
     }
 }
 
@@ -339,13 +350,14 @@ impl App {
             .filter_map(|v| v.as_str())
             .map(String::from)
             .collect();
-        // Every route in this UPDATE shares the same AS_PATH/communities; intern once here
-        // instead of per route so identical content across updates shares one allocation too.
-        let (path, communities) = {
+        // Every route in this UPDATE shares the same AS_PATH/communities/peer; intern once
+        // here instead of per route so identical content across updates shares one allocation.
+        let (path, communities, peer_arc) = {
             let mut data = self.data.lock().unwrap();
             (
                 data.pool.intern_as_path(path),
                 data.pool.intern_communities(communities),
+                data.pool.intern_str(peer),
             )
         };
         // Collect per-kind rows and emit once per BGP UPDATE message instead of once per
@@ -359,6 +371,9 @@ impl App {
                 } else {
                     "flowspec"
                 };
+                // afi is constant for every route in this group; intern once per group
+                // instead of once per route.
+                let afi_arc = self.data.lock().unwrap().pool.intern_str(afi);
                 for route in routes.as_array().into_iter().flatten() {
                     let identity = if family == "unicast" {
                         json!({"prefix":route["prefix"]})
@@ -371,8 +386,8 @@ impl App {
                     let mut entry = Route {
                         id: id.clone(),
                         family,
-                        afi: afi.clone(),
-                        peer: peer.to_owned(),
+                        afi: afi_arc.clone(),
+                        peer: peer_arc.clone(),
                         received_at: now(),
                         prefix: None,
                         next_hop: None,
@@ -587,10 +602,10 @@ async fn routes(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Json
             match sort {
                 "id" => r.id.as_str(),
                 "family" => r.family,
-                "afi" => r.afi.as_str(),
+                "afi" => r.afi.as_ref(),
                 "prefix" => r.prefix.as_deref().unwrap_or(""),
                 "next_hop" => r.next_hop.as_deref().unwrap_or(""),
-                "peer" => r.peer.as_str(),
+                "peer" => r.peer.as_ref(),
                 _ => "",
             }
             .to_lowercase()
