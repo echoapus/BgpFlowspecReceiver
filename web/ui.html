@@ -316,6 +316,50 @@ body {
 .tab-btn.active .tab-count { background: var(--accent-bg); color: var(--accent); }
 
 .tab-spacer { flex: 1; }
+.search-input {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 8px;
+  width: 170px;
+}
+.search-input:focus { outline: none; border-color: var(--accent); }
+.search-result {
+  position: fixed;
+  top: 48px;
+  right: 16px;
+  width: 380px;
+  max-height: 70vh;
+  overflow: auto;
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.25);
+  padding: 12px;
+  z-index: 50;
+}
+.search-result h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text2);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.search-result .close-btn { cursor: pointer; color: var(--text3); font-size: 14px; }
+.search-result .close-btn:hover { color: var(--text); }
+.search-result table { width: 100%; border-collapse: collapse; }
+.search-result td {
+  padding: 3px 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  vertical-align: top;
+  word-break: break-word;
+}
+.search-result td:first-child { color: var(--text2); white-space: nowrap; padding-right: 8px; }
 .icon-btn {
   background: none;
   border: 1px solid var(--border);
@@ -804,6 +848,9 @@ body {
         Live Log <span class="tab-count" id="log-count">0</span>
       </button>
       <div class="tab-spacer"></div>
+      <input class="search-input" id="search-ip" type="text" placeholder="show ip bgp <ip>"
+             onkeydown="if(event.key==='Enter')searchRoute()">
+      <button class="icon-btn" onclick="searchRoute()" title="Longest-prefix match lookup">🔍 Search</button>
       <button class="icon-btn" id="capture-btn" onclick="toggleCapture()">◉ Capture</button>
       <button class="icon-btn" id="export-btn" onclick="exportRoutes()" title="Download RIB as JSON">⬇ Export</button>
       <button class="icon-btn" id="clear-btn" onclick="clearLog()" style="display:none">Clear log</button>
@@ -868,6 +915,7 @@ body {
 
 <!-- Toast container -->
 <div class="toast-wrap" id="toasts"></div>
+<div class="search-result" id="search-result" style="display:none"></div>
 
 <script>
 // ── Theme (Light/Dark) ──────────────────────────────────────────────────────
@@ -1025,11 +1073,11 @@ function handleSnapshot(event) {
 
 // ── Live event handler ─────────────────────────────────────────────────────
 function handleLiveEvent(event) {
-  if (event.type === 'announce' && event.route_id) {
-    queueRouteReload(event.route_id);
+  if (event.type === 'announce' && event.count) {
+    queueRouteReload(event.routes.find(r => r.route_id)?.route_id);
   }
 
-  else if (event.type === 'withdraw' && event.route_id) {
+  else if (event.type === 'withdraw' && event.count) {
     queueRouteReload();
   }
 
@@ -1389,6 +1437,48 @@ function exportRoutes() {
   window.location.href = '/routes/export?family=' + encodeURIComponent(currentView);
 }
 
+// ── Longest-prefix match search (`show ip bgp <ip>`) ───────────────────────
+async function searchRoute() {
+  const ip = document.getElementById('search-ip').value.trim();
+  if (!ip) { closeSearchResult(); return; }
+  try {
+    const r = await fetch('/routes/search?ip=' + encodeURIComponent(ip));
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Search failed', 'error'); return; }
+    renderSearchResult(ip, data);
+  } catch (_) {
+    toast('Search failed', 'error');
+  }
+}
+
+function closeSearchResult() {
+  document.getElementById('search-result').style.display = 'none';
+}
+
+function renderSearchResult(ip, data) {
+  const panel = document.getElementById('search-result');
+  const header = `<h4>${data.match ? 'Longest match' : 'No match'} for ${escHtml(ip)}`
+    + `<span class="close-btn" onclick="closeSearchResult()">×</span></h4>`;
+  if (!data.match) {
+    panel.innerHTML = header
+      + `<div style="color:var(--text2);font-size:12px;">No unicast route covers this address.</div>`;
+    panel.style.display = 'block';
+    return;
+  }
+  const r = data.route;
+  const rows = [
+    ['prefix', `${r.prefix} (/${data.length})`],
+    ['next_hop', r.next_hop || '—'],
+    ['as_path', (r.as_path || []).join(' ') || '—'],
+    ['communities', (r.communities || []).join(' ') || '—'],
+    ['peer', r.peer],
+    ['received_at', formatServerTime(r.received_at)],
+  ];
+  panel.innerHTML = header
+    + `<table>${rows.map(([k, v]) => `<tr><td>${escHtml(k)}</td><td>${escHtml(v)}</td></tr>`).join('')}</table>`;
+  panel.style.display = 'block';
+}
+
 // ── Live Log ───────────────────────────────────────────────────────────────
 function setLogFilter(f) {
   logFilter = f;
@@ -1411,8 +1501,8 @@ function appendLogEntry(event) {
   const wrap  = document.getElementById('log-wrap');
   const empty = document.getElementById('log-empty');
   if (empty) empty.style.display = 'none';
-  if (event.type === 'announce') announceCount++;
-  if (event.type === 'withdraw') withdrawCount++;
+  if (event.type === 'announce') announceCount += event.count || 0;
+  if (event.type === 'withdraw') withdrawCount += event.count || 0;
   document.getElementById('a-events').innerHTML = `Announce ${announceCount}<br>Withdraw ${withdrawCount}`;
   if ((event.type === 'announce' || event.type === 'withdraw')
       && !document.getElementById('tab-log').classList.contains('active')) return;
@@ -1478,14 +1568,14 @@ function logBadge(event) {
 
 function logMsg(event) {
   let msg = escHtml(event.message || '');
-  if (event.type === 'announce' || event.type === 'withdraw') {
-    const parts = event.family === 'unicast'
-      ? [`prefix=${event.prefix || ''}`]
-      : Object.entries(event.match || {})
-        .map(([k,v]) => `${k}=${Array.isArray(v) ? v.join(' ') : v}`);
-    if (event.actions && event.actions.length)
-      parts.push('→ ' + event.actions.join(', '));
-    msg += `  <span style="color:var(--text2)">${escHtml(parts.join('  '))}</span>`;
+  if ((event.type === 'announce' || event.type === 'withdraw') && event.routes?.length) {
+    const shown = event.routes.slice(0, 3).map(r => r.family === 'unicast'
+      ? `prefix=${r.prefix || ''}`
+      : Object.entries(r.match || {}).map(([k,v]) => `${k}=${Array.isArray(v) ? v.join(' ') : v}`).join(' '));
+    if (event.routes.length > shown.length) shown.push(`(+${event.routes.length - shown.length} more)`);
+    const actions = event.routes[0].actions;
+    if (actions && actions.length) shown.push('→ ' + actions.join(', '));
+    msg += `  <span style="color:var(--text2)">${escHtml(shown.join('  '))}</span>`;
   }
   return msg;
 }

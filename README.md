@@ -28,7 +28,7 @@ has been removed. Its parser outputs are preserved as Rust regression fixtures.
 - **4-byte ASN** — `AS_TRANS`, `CAP_4BYTE_ASN`, `AS4_PATH` (RFC 6793)
 - **Hold-timer enforcement** — session resets on expiry
 - **JSON RIB persistence** — debounced atomic writes to a file (`--json-output`)
-- **Web UI** — sortable route table, live log with filter chips, analytics, packet capture viewer
+- **Web UI** — sortable route table, live log with filter chips, analytics, packet capture viewer, `show ip bgp <ip>` longest-prefix-match search
 
 ---
 
@@ -94,10 +94,16 @@ Open `http://localhost:8080`. Session config is saved to `localStorage`.
 | **Live Log** tab | SSE event stream — filter by SESSION / ANNOUNCE / WITHDRAW / ERROR / PCAP; click to expand JSON |
 | **◉ Capture** | Start/stop `tcpdump` on BGP traffic (requires `tcpdump` on `$PATH`) |
 | **⬇ Export** | Download the current table view as JSON |
+| **🔍 Search** box | `show ip bgp <ip>` style longest-prefix-match lookup against the unicast RIB (`GET /routes/search?ip=`) |
 
 Header indicators:
 - **SSE dot** — green = live, pulsing yellow = reconnecting
 - **State badge** — `IDLE` → `CONNECT` → `OPEN_SENT` → `OPEN_CONFIRMED` → `ESTABLISHED`
+
+> `announce`/`withdraw` SSE events are batched per BGP UPDATE message — one event
+> carries `{"count", "routes": [...], "path_attributes"}` for every route in that
+> message, not one event per route. This keeps a full-table initial sync from
+> flooding the broadcast channel and the Live Log.
 
 ---
 

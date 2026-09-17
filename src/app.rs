@@ -16,6 +16,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     convert::Infallible,
     io::Write,
+    net::IpAddr,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -203,21 +204,26 @@ impl App {
     }
 
     pub fn flush(&self, force: bool) -> std::io::Result<()> {
-        let mut data = self.data.lock().unwrap();
-        if !force
-            && !data
-                .dirty
-                .is_some_and(|t| t.elapsed() >= Duration::from_secs(5))
-        {
-            return Ok(());
-        }
-        let Some(path) = &data.output else {
-            return Ok(());
+        // Snapshot Arc<Route> clones and release the lock before serializing to disk, so a
+        // large RIB write doesn't hold apply_update() out for the whole file write.
+        let (path, routes) = {
+            let data = self.data.lock().unwrap();
+            if !force
+                && !data
+                    .dirty
+                    .is_some_and(|t| t.elapsed() >= Duration::from_secs(5))
+            {
+                return Ok(());
+            }
+            let Some(path) = data.output.clone() else {
+                return Ok(());
+            };
+            (path, data.routes.values().cloned().collect::<Vec<_>>())
         };
         let tmp = format!("{path}.tmp");
         let mut file = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
-        write!(file, "{{\"count\":{},\"routes\":[", data.routes.len())?;
-        for (i, route) in data.routes.values().enumerate() {
+        write!(file, "{{\"count\":{},\"routes\":[", routes.len())?;
+        for (i, route) in routes.iter().enumerate() {
             if i > 0 {
                 file.write_all(b",")?;
             }
@@ -226,8 +232,11 @@ impl App {
         file.write_all(b"]}")?;
         file.flush()?;
         file.get_ref().sync_all()?;
-        std::fs::rename(tmp, path)?;
-        data.dirty = None;
+        std::fs::rename(tmp, &path)?;
+        // ponytail: a mutation landing while this write was in flight already re-set dirty
+        // via insert()/remove(); clearing it here can race that back to None, but the next
+        // mutation re-marks it and the following periodic flush picks up the change.
+        self.data.lock().unwrap().dirty = None;
         Ok(())
     }
 
@@ -339,6 +348,10 @@ impl App {
                 data.pool.intern_communities(communities),
             )
         };
+        // Collect per-kind rows and emit once per BGP UPDATE message instead of once per
+        // route: a full-table initial sync can carry hundreds of routes per message, and
+        // each emit() pays for a JSON build, a history push and a broadcast send.
+        let mut batches: HashMap<&'static str, Vec<Value>> = HashMap::new();
         for kind in ["announce", "withdraw"] {
             for (afi, routes) in update[kind].as_object().into_iter().flatten() {
                 let family: &'static str = if afi.ends_with("-unicast") {
@@ -386,21 +399,23 @@ impl App {
                     }
                     drop(data);
                     let route_id = (kind == "announce" || existed).then(|| id.clone());
-                    // Raw attrs go out on the live/log event only; the stored RIB entry
-                    // already carries the decoded as_path/communities/match/actions, and
-                    // duplicating the raw attrs into every RIB row is what blows up memory
-                    // on a full table.
-                    let mut event = serde_json::to_value(&entry).unwrap();
-                    event["route_id"] = json!(route_id);
-                    event["path_attributes"] = attrs.clone();
-                    self.emit(
-                        kind,
-                        "update",
-                        format!("{} {afi}", kind.to_uppercase()),
-                        event,
-                    );
+                    let mut row = serde_json::to_value(&entry).unwrap();
+                    row["route_id"] = json!(route_id);
+                    batches.entry(kind).or_default().push(row);
                 }
             }
+        }
+        // Raw attrs go out on the live/log event only; the stored RIB entry already carries
+        // the decoded as_path/communities/match/actions, and duplicating the raw attrs into
+        // every RIB row is what blows up memory on a full table.
+        for (kind, routes) in batches {
+            let count = routes.len();
+            self.emit(
+                kind,
+                "update",
+                format!("{} x{count}", kind.to_uppercase()),
+                json!({"count":count,"routes":routes,"path_attributes":attrs.clone()}),
+            );
         }
     }
 }
@@ -621,6 +636,47 @@ async fn export(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Resp
     )
         .into_response())
 }
+
+// Longest-prefix match, `show ip bgp <ip>` style: the mask length this unicast
+// prefix shares with `ip`, or None if `ip` isn't inside it.
+fn prefix_match_len(prefix: &str, ip: IpAddr) -> Option<u8> {
+    let (net, len) = prefix.split_once('/')?;
+    let len: u8 = len.parse().ok()?;
+    match (net.parse::<IpAddr>().ok()?, ip) {
+        (IpAddr::V4(net), IpAddr::V4(ip)) if len <= 32 => {
+            let mask = if len == 0 { 0 } else { u32::MAX << (32 - len) };
+            (u32::from(net) & mask == u32::from(ip) & mask).then_some(len)
+        }
+        (IpAddr::V6(net), IpAddr::V6(ip)) if len <= 128 => {
+            let mask = if len == 0 { 0 } else { u128::MAX << (128 - len) };
+            (u128::from(net) & mask == u128::from(ip) & mask).then_some(len)
+        }
+        _ => None,
+    }
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    ip: String,
+}
+async fn search(
+    State(app): State<Shared>,
+    Query(q): Query<SearchQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let ip: IpAddr = q.ip.trim().parse().map_err(|_| bad("invalid ip"))?;
+    // Snapshot Arc<Route> clones and release the lock before scanning, same as export():
+    // a full-table scan shouldn't hold apply_update() out for its whole duration.
+    let routes: Vec<Arc<Route>> = app.data.lock().unwrap().routes.values().cloned().collect();
+    let best = routes
+        .iter()
+        .filter(|r| r.family == "unicast")
+        .filter_map(|r| Some((prefix_match_len(r.prefix.as_deref()?, ip)?, r)))
+        .max_by_key(|(len, _)| *len);
+    Ok(Json(match best {
+        Some((len, route)) => json!({"match":true,"length":len,"route":route}),
+        None => json!({"match":false}),
+    }))
+}
 async fn events(State(app): State<Shared>) -> Response {
     let mut shutdown = app.shutdown.subscribe();
     let (mut rx, initial) = {
@@ -682,6 +738,7 @@ pub fn router(app: Shared) -> Router {
         .route("/session/stop", post(stop))
         .route("/routes", get(routes))
         .route("/routes/export", get(export))
+        .route("/routes/search", get(search))
         .route("/events", get(events))
         .route("/health", get(health))
         .route(

@@ -159,6 +159,36 @@ async fn rib_http_stats_export_and_persistence() {
     std::fs::remove_file(path).unwrap();
 }
 
+#[tokio::test]
+async fn search_longest_prefix_match() {
+    let app = App::new(None);
+    let body = update(
+        &attr(3, &[192, 0, 2, 1]),
+        &[24, 203, 0, 113, 25, 203, 0, 113, 128],
+    );
+    app.apply_update(wire::update(&body, 2).unwrap(), "192.0.2.1");
+    let api = router(app.clone());
+
+    let (status, res) = request(api.clone(), "/routes/search?ip=203.0.113.130").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(res["match"], true);
+    assert_eq!(res["length"], 25);
+    assert_eq!(res["route"]["prefix"], "203.0.113.128/25");
+
+    let (_, res) = request(api.clone(), "/routes/search?ip=203.0.113.10").await;
+    assert_eq!(res["match"], true);
+    assert_eq!(res["length"], 24);
+    assert_eq!(res["route"]["prefix"], "203.0.113.0/24");
+
+    let (_, res) = request(api.clone(), "/routes/search?ip=8.8.8.8").await;
+    assert_eq!(res["match"], false);
+
+    assert_eq!(
+        request(api.clone(), "/routes/search?ip=not-an-ip").await.0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
 async fn read_frame(stream: &mut TcpStream) -> (u8, Vec<u8>) {
     let mut h = [0; 19];
     timeout(Duration::from_secs(3), stream.read_exact(&mut h))
