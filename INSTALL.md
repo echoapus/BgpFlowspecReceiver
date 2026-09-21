@@ -6,7 +6,8 @@ removed; its parser outputs are retained as fixed regression fixtures.
 
 ## Build and Run
 
-Install a current stable Rust toolchain, then:
+Install a current stable Rust toolchain and a C compiler (`gcc` or `clang`,
+needed to build the bundled mimalloc allocator), then:
 
 ```bash
 cargo build --locked --release

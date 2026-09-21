@@ -1,4 +1,5 @@
 FROM rust:1.98-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
