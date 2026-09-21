@@ -1,6 +1,6 @@
 # bgpx
 
-BGP Unicast and FlowSpec receiver with a live web UI — native Rust edition, version 26.9.17.
+BGP Unicast and FlowSpec receiver with a live web UI — native Rust edition, version 26.9.21.
 Connects to a peer router, maintains an in-memory RIB, and streams everything to the browser via Server-Sent Events.
 
 ```bash
