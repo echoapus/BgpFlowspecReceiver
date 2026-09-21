@@ -96,6 +96,14 @@ Open `http://localhost:8080`. Session config is saved to `localStorage`.
 | **⬇ Export** | Download the current table view as JSON |
 | **🔍 Search** box | `show ip bgp <ip>` style longest-prefix-match lookup against the unicast RIB (`GET /routes/search?ip=`) |
 
+Memory limits: event replay retains at most 2,000 events or 8 MiB of serialized
+JSON, whichever comes first; larger individual events are live-only. Explicitly
+stopping a session clears server-side replay history. Live delivery buffers 64
+events; lagging clients receive a fresh snapshot. Exports allow two concurrent
+snapshots and expire after 60 seconds (additional requests return HTTP 429).
+Unused interned route attributes and spare index capacity are reclaimed on the
+maintenance worker's 30-second cadence; session teardown releases the containers.
+
 Header indicators:
 - **SSE dot** — green = live, pulsing yellow = reconnecting
 - **State badge** — `IDLE` → `CONNECT` → `OPEN_SENT` → `OPEN_CONFIRMED` → `ESTABLISHED`

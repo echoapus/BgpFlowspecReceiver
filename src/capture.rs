@@ -141,7 +141,7 @@ mod tests {
         payload.extend(crate::wire::message(4, &[]));
         flush(&app, Some(packet), &payload);
         let data = app.data.lock().unwrap();
-        let event = data.history.back().unwrap();
+        let event: Value = serde_json::from_str(data.history.back().unwrap()).unwrap();
         assert_eq!(event["type"], "capture");
         assert_eq!(event["bgp_type"], "KEEPALIVE");
         assert_eq!(event["src"], "192.0.2.1:179");

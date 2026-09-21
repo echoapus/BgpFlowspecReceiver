@@ -102,7 +102,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // ponytail: fixed 30s cadence rather than triggering off withdraw volume;
                     // malloc_trim isn't free to call, and a flat timer is simpler than tracking
                     // how much was freed since the last trim.
-                    if tick % 30 == 0 {
+                    if tick.is_multiple_of(30) {
+                        app.reclaim_memory();
                         trim_heap();
                     }
                 })

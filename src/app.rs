@@ -20,7 +20,11 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
+
+const HISTORY_BYTES: usize = 8 * 1024 * 1024;
+const HISTORY_EVENTS: usize = 2000;
+const EXPORT_TIMEOUT: Duration = Duration::from_secs(60);
 
 use crate::session::Config;
 
@@ -48,10 +52,11 @@ pub struct Control {
 }
 
 pub struct App {
-    // ponytail: one state lock includes persistence I/O; snapshot writes if large RIBs stall updates.
+    // Route snapshots release this lock before persistence I/O.
     pub data: Mutex<Data>,
     pub control: tokio::sync::Mutex<Control>,
-    pub events: broadcast::Sender<Value>,
+    pub events: broadcast::Sender<Arc<str>>,
+    exports: Arc<Semaphore>,
     pub shutdown: tokio::sync::watch::Sender<bool>,
 }
 
@@ -87,9 +92,7 @@ fn slice_is_empty<T>(v: &Arc<[T]>) -> bool {
 // upstream, same policy tag), and peer/afi are drawn from a handful of distinct values (one
 // peer, a few AFI/SAFI combos) repeated across every row. Interning them means routes that
 // share content share the allocation too, instead of each of 900k+ rows carrying its own copy.
-// ponytail: interned entries are never evicted; the number of distinct values on a real table
-// is in the thousands at most, not millions, so this stays small regardless of RIB size.
-// Data::clear() resets it between sessions.
+// Unused entries are collected by the maintenance worker; session teardown drops the pool.
 #[derive(Default)]
 struct Pool {
     as_path: HashSet<Arc<[u32]>>,
@@ -121,10 +124,13 @@ impl Pool {
         self.strings.insert(arc.clone());
         arc
     }
-    fn clear(&mut self) {
-        self.as_path.clear();
-        self.communities.clear();
-        self.strings.clear();
+    fn collect(&mut self) {
+        self.as_path.retain(|v| Arc::strong_count(v) > 1);
+        self.communities.retain(|v| Arc::strong_count(v) > 1);
+        self.strings.retain(|v| Arc::strong_count(v) > 1);
+        self.as_path.shrink_to_fit();
+        self.communities.shrink_to_fit();
+        self.strings.shrink_to_fit();
     }
 }
 
@@ -134,7 +140,8 @@ pub struct Data {
     pub capturing: bool,
     pub state: &'static str,
     pub peer_info: Value,
-    pub history: VecDeque<Value>,
+    pub history: VecDeque<Arc<str>>,
+    history_bytes: usize,
     pub routes: BTreeMap<u64, Arc<Route>>,
     ids: HashMap<String, u64>,
     sequence: u64,
@@ -155,6 +162,7 @@ impl App {
                 state: "IDLE",
                 peer_info: json!({}),
                 history: VecDeque::new(),
+                history_bytes: 0,
                 routes: BTreeMap::new(),
                 ids: HashMap::new(),
                 sequence: 0,
@@ -176,15 +184,17 @@ impl App {
                 dirty: None,
             }),
             control: tokio::sync::Mutex::new(Control::default()),
-            events: broadcast::channel(2000).0,
+            // Short live buffer; lagging clients recover through a snapshot.
+            events: broadcast::channel(64).0,
+            exports: Arc::new(Semaphore::new(2)),
             shutdown: tokio::sync::watch::channel(false).0,
         })
     }
 
     pub fn emit(&self, kind: &str, level: &str, message: impl ToString, extra: Value) {
         let mut event = json!({"ts":now(),"type":kind,"level":level,"message":message.to_string()});
-        if let Some(extra) = extra.as_object() {
-            event.as_object_mut().unwrap().extend(extra.clone());
+        if let Value::Object(extra) = extra {
+            event.as_object_mut().unwrap().extend(extra);
         }
         match level {
             "error" => tracing::error!("{event}"),
@@ -192,12 +202,25 @@ impl App {
             "update" | "packet" => tracing::debug!("{event}"),
             _ => tracing::info!("{event}"),
         }
+        let event: Arc<str> = Arc::from(event.to_string());
         let mut data = self.data.lock().unwrap();
-        if data.history.len() == 2000 {
-            data.history.pop_front();
+        if event.len() <= HISTORY_BYTES {
+            while data.history.len() >= HISTORY_EVENTS
+                || data.history_bytes + event.len() > HISTORY_BYTES
+            {
+                let oldest = data.history.pop_front().unwrap();
+                data.history_bytes -= oldest.len();
+            }
+            data.history_bytes += event.len();
+            data.history.push_back(event.clone());
         }
-        data.history.push_back(event.clone());
         let _ = self.events.send(event);
+    }
+
+    pub fn reclaim_memory(&self) {
+        let mut data = self.data.lock().unwrap();
+        data.pool.collect();
+        data.ids.shrink_to_fit();
     }
 
     pub fn set_state(&self, state: &'static str) {
@@ -220,9 +243,9 @@ impl App {
         let (path, routes) = {
             let data = self.data.lock().unwrap();
             if !force
-                && !data
+                && data
                     .dirty
-                    .is_some_and(|t| t.elapsed() >= Duration::from_secs(5))
+                    .is_none_or(|t| t.elapsed() < Duration::from_secs(5))
             {
                 return Ok(());
             }
@@ -264,6 +287,7 @@ impl App {
         Self::stop_task(&mut control.capture).await;
         {
             let mut data = self.data.lock().unwrap();
+            data.clear_history();
             data.running = false;
             data.state = "IDLE";
             data.peer_info = json!({});
@@ -332,9 +356,8 @@ impl App {
                             path = flat;
                         }
                     }
-                    "COMMUNITIES" | "LARGE_COMMUNITIES" => communities.extend(
-                        values.iter().filter_map(|v| v.as_str()).map(String::from),
-                    ),
+                    "COMMUNITIES" | "LARGE_COMMUNITIES" => communities
+                        .extend(values.iter().filter_map(|v| v.as_str()).map(String::from)),
                     _ => {}
                 }
             }
@@ -436,6 +459,11 @@ impl App {
 }
 
 impl Data {
+    fn clear_history(&mut self) {
+        self.history = VecDeque::new();
+        self.history_bytes = 0;
+    }
+
     fn metrics(route: &Route) -> Vec<(String, String)> {
         let mut out = Vec::new();
         if route.family == "unicast" {
@@ -521,9 +549,9 @@ impl Data {
             self.dirty = Some(Instant::now());
         }
         self.routes.clear();
-        self.ids.clear();
-        self.counts.clear();
-        self.pool.clear();
+        self.ids = HashMap::new();
+        self.counts = HashMap::new();
+        self.pool = Pool::default();
         for c in self.analytics.values_mut() {
             c.clear();
         }
@@ -622,6 +650,12 @@ async fn routes(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Json
 }
 async fn export(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Response, ApiError> {
     let family = family(&q)?.to_owned();
+    let permit = app.exports.clone().try_acquire_owned().map_err(|_| {
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error":"Two exports are already running"})),
+        )
+    })?;
     // Snapshot shared references so serialization does not hold the RIB lock across awaits.
     let rows: Vec<_> = app
         .data
@@ -632,13 +666,6 @@ async fn export(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Resp
         .filter(|r| family == "total" || r.family == family)
         .cloned()
         .collect();
-    let stream = async_stream::stream! {
-        yield Ok::<_,Infallible>("{\"routes\":[".to_owned());
-        for (i,row) in rows.into_iter().enumerate(){
-            yield Ok(format!("{}{}",if i==0{""}else{","},serde_json::to_string(&row).unwrap()));
-        }
-        yield Ok("]}".to_owned());
-    };
     Ok((
         [
             ("content-type", "application/json"),
@@ -647,9 +674,43 @@ async fn export(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Resp
                 "attachment; filename=\"bgpx-routes.json\"",
             ),
         ],
-        axum::body::Body::from_stream(stream),
+        export_body(rows, permit, EXPORT_TIMEOUT),
     )
         .into_response())
+}
+
+// The producer owns the snapshot so its deadline releases routes even if the
+// HTTP client stops polling the body entirely. One queued row bounds backpressure.
+fn export_body(
+    rows: Vec<Arc<Route>>,
+    permit: OwnedSemaphorePermit,
+    duration: Duration,
+) -> axum::body::Body {
+    let (tx, mut rx) = mpsc::channel(1);
+    let (done, finished) = oneshot::channel();
+    tokio::spawn(async move {
+        let _permit = permit;
+        let write = async move {
+            tx.send(Ok::<_, std::io::Error>("{\"routes\":[".to_owned()))
+                .await
+                .ok()?;
+            for (i, row) in rows.into_iter().enumerate() {
+                let json = serde_json::to_string(&row).unwrap();
+                tx.send(Ok(format!("{}{json}", if i == 0 { "" } else { "," })))
+                    .await
+                    .ok()?;
+            }
+            tx.send(Ok("]}".to_owned())).await.ok()
+        };
+        let result = tokio::time::timeout(duration, write).await;
+        let _ = done.send(result.is_ok());
+    });
+    axum::body::Body::from_stream(async_stream::stream! {
+        while let Some(chunk) = rx.recv().await { yield chunk; }
+        if finished.await != Ok(true) {
+            yield Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "Export interrupted or timed out"));
+        }
+    })
 }
 
 // Longest-prefix match, `show ip bgp <ip>` style: the mask length this unicast
@@ -663,7 +724,11 @@ fn prefix_match_len(prefix: &str, ip: IpAddr) -> Option<u8> {
             (u32::from(net) & mask == u32::from(ip) & mask).then_some(len)
         }
         (IpAddr::V6(net), IpAddr::V6(ip)) if len <= 128 => {
-            let mask = if len == 0 { 0 } else { u128::MAX << (128 - len) };
+            let mask = if len == 0 {
+                0
+            } else {
+                u128::MAX << (128 - len)
+            };
             (u128::from(net) & mask == u128::from(ip) & mask).then_some(len)
         }
         _ => None,
@@ -694,20 +759,23 @@ async fn search(
 }
 async fn events(State(app): State<Shared>) -> Response {
     let mut shutdown = app.shutdown.subscribe();
-    let (mut rx, initial) = {
+    let (mut rx, snapshot, initial) = {
         let data = app.data.lock().unwrap();
-        let rx = app.events.subscribe();
-        let mut initial = vec![data.snapshot()];
-        initial.extend(data.history.iter().cloned().map(|mut e| {
-            e["replayed"] = json!(true);
-            e
-        }));
-        (rx, initial)
+        (
+            app.events.subscribe(),
+            data.snapshot().to_string(),
+            data.history.clone(),
+        )
     };
     let stream = async_stream::stream! {
-        for event in initial {yield Ok::<_,Infallible>(Event::default().data(event.to_string()));}
+        yield Ok::<_,Infallible>(Event::default().data(snapshot));
+        for event in initial {
+            // Events are serialized objects; append the replay flag without cloning a JSON tree.
+            let replay = format!("{},\"replayed\":true}}", &event[..event.len() - 1]);
+            yield Ok(Event::default().data(replay));
+        }
         loop {let received=tokio::select!{_=shutdown.changed()=>break,event=rx.recv()=>event};match received {
-            Ok(event)=>yield Ok(Event::default().data(event.to_string())),
+            Ok(event)=>yield Ok(Event::default().data(event.as_ref())),
             Err(broadcast::error::RecvError::Lagged(_))=>{
                 let snapshot=app.data.lock().unwrap().snapshot();yield Ok(Event::default().data(snapshot.to_string()));
             }
@@ -759,11 +827,188 @@ pub fn router(app: Shared) -> Router {
         .route(
             "/log",
             delete(|State(app): State<Shared>| async move {
-                app.data.lock().unwrap().history.clear();
+                app.data.lock().unwrap().clear_history();
                 Json(json!({"ok":true}))
             }),
         )
         .route("/capture/start", post(crate::capture::start))
         .route("/capture/stop", post(crate::capture::stop))
         .with_state(app)
+}
+
+#[cfg(test)]
+mod memory_tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    fn announce(app: &Shared, asn: u32) {
+        app.apply_update(
+            json!({
+                "announce":{"ipv4-unicast":[{"prefix":"192.0.2.0/24"}]},
+                "path_attributes":[
+                    {"name":"AS_PATH","value":[{"asns":[asn]}]},
+                    {"name":"COMMUNITIES","value":[format!("65000:{asn}")]}
+                ]
+            }),
+            "192.0.2.1",
+        );
+    }
+
+    #[test]
+    fn churn_reclaims_unused_attributes_and_teardown_releases_capacity() {
+        let app = App::new(None);
+        announce(&app, 1);
+        let old = app
+            .data
+            .lock()
+            .unwrap()
+            .routes
+            .values()
+            .next()
+            .unwrap()
+            .clone();
+        let old_path = Arc::downgrade(&old.as_path);
+        let old_communities = Arc::downgrade(&old.communities);
+        for asn in 2..1000 {
+            announce(&app, asn);
+        }
+        app.reclaim_memory();
+        // An export snapshot still needs the old attributes.
+        assert!(old_path.upgrade().is_some());
+        drop(old);
+        app.reclaim_memory();
+        assert!(old_path.upgrade().is_none());
+        assert!(old_communities.upgrade().is_none());
+        {
+            let data = app.data.lock().unwrap();
+            assert_eq!(data.routes.len(), 1);
+            assert_eq!(data.pool.as_path.len(), 1);
+            assert_eq!(data.pool.communities.len(), 1);
+        }
+        app.apply_update(
+            json!({"withdraw":{"ipv4-unicast":[{"prefix":"192.0.2.0/24"}]}}),
+            "192.0.2.1",
+        );
+        app.reclaim_memory();
+        {
+            let data = app.data.lock().unwrap();
+            assert!(data.pool.as_path.is_empty());
+            assert!(data.pool.communities.is_empty());
+        }
+        announce(&app, 1000);
+        let mut data = app.data.lock().unwrap();
+        assert!(data.ids.capacity() > 0);
+        assert!(data.pool.as_path.capacity() > 0);
+        data.clear();
+        assert_eq!(data.ids.capacity(), 0);
+        assert_eq!(data.pool.as_path.capacity(), 0);
+        assert_eq!(data.pool.communities.capacity(), 0);
+        assert_eq!(data.pool.strings.capacity(), 0);
+    }
+
+    #[tokio::test]
+    async fn history_is_shared_bounded_and_reset() {
+        let app = App::new(None);
+        let mut rx = app.events.subscribe();
+        app.emit("session", "info", "shared", json!({}));
+        let event = rx.recv().await.unwrap();
+        assert!(Arc::ptr_eq(
+            &event,
+            app.data.lock().unwrap().history.back().unwrap()
+        ));
+        for _ in 0..HISTORY_EVENTS + 1 {
+            app.emit("session", "info", "small", json!({}));
+        }
+        assert_eq!(app.data.lock().unwrap().history.len(), HISTORY_EVENTS);
+        for _ in 0..10 {
+            app.emit(
+                "announce",
+                "update",
+                "large",
+                json!({"payload":"x".repeat(1024 * 1024)}),
+            );
+        }
+        {
+            let data = app.data.lock().unwrap();
+            assert!(data.history.len() < 10);
+            assert!(data.history_bytes <= HISTORY_BYTES);
+            assert_eq!(
+                data.history_bytes,
+                data.history.iter().map(|s| s.len()).sum::<usize>()
+            );
+        }
+        // An oversized event remains available live but cannot exceed the replay budget.
+        app.emit(
+            "announce",
+            "update",
+            "oversized",
+            json!({"payload":"x".repeat(HISTORY_BYTES)}),
+        );
+        assert!(app.data.lock().unwrap().history_bytes <= HISTORY_BYTES);
+        app.data.lock().unwrap().clear_history();
+        app.emit("session", "info", "after clear", json!({}));
+        app.stop().await;
+        let data = app.data.lock().unwrap();
+        assert_eq!(data.history.len(), 1); // only the stop event
+        assert_eq!(data.history_bytes, data.history[0].len());
+    }
+
+    #[tokio::test]
+    async fn stalled_export_releases_snapshot_and_permit_without_body_polling() {
+        let app = App::new(None);
+        announce(&app, 1);
+        let rows: Vec<_> = app.data.lock().unwrap().routes.values().cloned().collect();
+        let old = Arc::downgrade(&rows[0]);
+        let permit = app.exports.clone().try_acquire_owned().unwrap();
+        let body = export_body(rows, permit, Duration::from_millis(10));
+        app.data.lock().unwrap().clear();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while old.upgrade().is_some() || app.exports.available_permits() != 2 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(to_bytes(body, 100_000).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn export_limit_and_disconnect_release() {
+        let app = App::new(None);
+        announce(&app, 1);
+        let page = || Page {
+            family: None,
+            page: None,
+            page_size: None,
+            sort: None,
+            order: None,
+        };
+        let first = export(State(app.clone()), Query(page())).await.unwrap();
+        let second = export(State(app.clone()), Query(page())).await.unwrap();
+        assert_eq!(
+            export(State(app.clone()), Query(page()))
+                .await
+                .unwrap_err()
+                .0,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        drop(first);
+        drop(second);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while app.exports.available_permits() != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let response = export(State(app), Query(page())).await.unwrap();
+        let bytes = to_bytes(response.into_body(), 100_000).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap()["routes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
 }

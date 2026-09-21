@@ -356,14 +356,9 @@ async fn hold_expiry_and_passive_reconnect() {
     wait_state(&app, "ESTABLISHED").await;
     timeout(Duration::from_secs(5), async {
         loop {
-            if app
-                .data
-                .lock()
-                .unwrap()
-                .history
-                .iter()
-                .any(|e| e["message"] == "Hold timer expired")
-            {
+            if app.data.lock().unwrap().history.iter().any(|e| {
+                serde_json::from_str::<Value>(e).unwrap()["message"] == "Hold timer expired"
+            }) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
