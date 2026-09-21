@@ -1,21 +1,11 @@
 use bgpx::{
     app::{self, App},
     session::Config,
+    trim_heap,
 };
 use clap::Parser;
-use mimalloc::MiMalloc;
 use serde_json::json;
 use std::{net::IpAddr, time::Duration};
-
-// mimalloc keeps freed RIB memory in per-thread free lists for reuse instead of returning it
-// to the OS, so RSS stays at its high-water mark after a burst of withdraws. mi_collect(true)
-// asks it to actually give unused pages back.
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
-
-fn trim_heap() {
-    unsafe { libmimalloc_sys::mi_collect(true) };
-}
 
 #[derive(Parser)]
 #[command(
@@ -97,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         app.emit("error", "error", e, json!({}));
                     }
                     // ponytail: fixed 30s cadence rather than triggering off withdraw volume;
-                    // malloc_trim isn't free to call, and a flat timer is simpler than tracking
+                    // mi_collect isn't free to call, and a flat timer is simpler than tracking
                     // how much was freed since the last trim.
                     if tick.is_multiple_of(30) {
                         app.reclaim_memory();

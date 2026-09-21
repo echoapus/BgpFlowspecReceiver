@@ -164,6 +164,9 @@ pub async fn run(app: Shared, config: Config, mut stop: oneshot::Receiver<()>) {
             data.clear();
             data.peer_info = json!({});
         }
+        // mi_collect only purges the calling thread's heap, so it has to run here, on the
+        // same runtime worker that just dropped the RIB, not from the periodic background task.
+        crate::trim_heap();
         app.set_state("IDLE");
         let Some(result) = result else { break };
         if let Err(e) = result {
@@ -182,6 +185,7 @@ pub async fn run(app: Shared, config: Config, mut stop: oneshot::Receiver<()>) {
         data.clear();
         data.peer_info = json!({});
     }
+    crate::trim_heap();
     if let Err(e) = app.flush(true) {
         app.emit("error", "error", e, json!({}));
     }
