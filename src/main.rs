@@ -3,22 +3,19 @@ use bgpx::{
     session::Config,
 };
 use clap::Parser;
+use mimalloc::MiMalloc;
 use serde_json::json;
 use std::{net::IpAddr, time::Duration};
 
-// glibc's malloc keeps freed RIB memory in its own free list for reuse instead of returning
-// it to the OS, so RSS stays at its high-water mark after a burst of withdraws. malloc_trim
+// mimalloc keeps freed RIB memory in per-thread free lists for reuse instead of returning it
+// to the OS, so RSS stays at its high-water mark after a burst of withdraws. mi_collect(true)
 // asks it to actually give unused pages back.
-#[cfg(target_os = "linux")]
-unsafe extern "C" {
-    fn malloc_trim(pad: usize) -> i32;
-}
-#[cfg(target_os = "linux")]
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 fn trim_heap() {
-    unsafe { malloc_trim(0) };
+    unsafe { libmimalloc_sys::mi_collect(true) };
 }
-#[cfg(not(target_os = "linux"))]
-fn trim_heap() {}
 
 #[derive(Parser)]
 #[command(

@@ -17,6 +17,8 @@ clap = { version = "4", features = ["derive"] }
 regex = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+mimalloc = { version = "0.1.52", features = ["extended"] }
+libmimalloc-sys = { version = "0.1.49", features = ["extended"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
