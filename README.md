@@ -52,6 +52,9 @@ bgpx --local-as 65001 --router-id 10.0.0.1 \
 
 ```bash
 docker build -t bgpx .
+# To enable packet capture, add: --cap-add=NET_RAW --cap-add=NET_ADMIN
+# Note: Binding port 179 may require root on standard Linux hosts. 
+# Alternatively, use `-p 9179:9179` and pass `--listen-port 9179` to bgpx.
 docker run --rm -p 179:179 -p 8080:8080 bgpx
 ```
 
@@ -112,6 +115,15 @@ Header indicators:
 > carries `{"count", "routes": [...], "path_attributes"}` for every route in that
 > message, not one event per route. This keeps a full-table initial sync from
 > flooding the broadcast channel and the Live Log.
+
+---
+
+## HTTP API & Monitoring
+
+In addition to the Web UI, `bgpx` exposes HTTP endpoints:
+
+- `GET /health` — Returns `200 OK` when the BGP session is `ESTABLISHED`, and `503 Service Unavailable` otherwise. Ideal for load balancer or Kubernetes readiness probes.
+- `GET /routes/search?ip=<ip>` — Performs a longest-prefix-match lookup against the unicast RIB.
 
 ---
 
@@ -191,6 +203,8 @@ Header indicators:
 
 ## Architecture
 
+*BGP messages are parsed natively (`wire.rs`), stored in an in-memory RIB (`app.rs`), and immediately broadcast to the frontend via Server-Sent Events (SSE).*
+
 ```
 src/
 ├── main.rs         CLI, HTTP listener, shutdown and persistence worker
@@ -218,7 +232,15 @@ cargo test --locked
 
 ## Installation
 
-For host deployment (systemd service, `/opt/bgpx`, port-179 capability) see [INSTALL.md](INSTALL.md).
+You can easily install `bgpx` as a systemd service using the included script:
+
+```bash
+sudo ./deploy.sh --service --cap-net-bind-service
+```
+
+For full host deployment instructions, custom paths, or to cleanly remove the application via `uninstall.sh`, see [INSTALL.md](INSTALL.md).
+
+**Upgrading from Python:** The legacy Python backend and PyO3 dependency have been completely removed. If you are upgrading an older deployment, simply re-run `./deploy.sh --service` to replace it with the native Rust binary. Existing configurations will be preserved.
 
 ---
 
