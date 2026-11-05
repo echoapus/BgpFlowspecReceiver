@@ -127,11 +127,17 @@ fn components(mut data: &[u8], afi: u16) -> Result<Value> {
                     decode_op(op)
                 };
                 let value = read_be_int(take(&mut data, len)?);
-                values.push(if bitmask {
+                let condition = if bitmask {
                     format_bitmask_value(kind, symbol, value)
                 } else {
                     format!("{}{}", symbol, format_numeric_value(kind, value))
-                });
+                };
+                let condition = if values.is_empty() {
+                    condition
+                } else {
+                    format!("{} {condition}", if op & 0x40 != 0 { "AND" } else { "OR" })
+                };
+                values.push(condition);
                 if end {
                     break;
                 }

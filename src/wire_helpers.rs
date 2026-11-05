@@ -20,23 +20,37 @@ fn component_name(ftype: u8, afi: u16) -> Option<&'static str> {
 }
 
 fn parse_prefix(data: &[u8], mut offset: usize, afi: u16) -> Result<(String, usize), ()> {
-    if offset >= data.len() {
-        return Err(());
-    }
-    let prefix_len = data[offset] as usize;
+    let prefix_len = *data.get(offset).ok_or(())? as usize;
     offset += 1;
     let max_bits = if afi == AFI_IPV6 { 128 } else { 32 };
     if prefix_len > max_bits {
         return Err(());
     }
-    let num_bytes = prefix_len.div_ceil(8);
-    if offset + num_bytes > data.len() {
-        return Err(());
+    let skip = if afi == AFI_IPV6 {
+        let skip = *data.get(offset).ok_or(())? as usize;
+        offset += 1;
+        if skip > prefix_len || (skip == prefix_len && prefix_len != 0) {
+            return Err(());
+        }
+        skip
+    } else {
+        0
+    };
+    let bits = prefix_len - skip;
+    let num_bytes = bits.div_ceil(8);
+    let pattern = data.get(offset..offset + num_bytes).ok_or(())?;
+    let mut address = [0u8; 16];
+    for bit in 0..bits {
+        if pattern[bit / 8] & (0x80 >> (bit % 8)) != 0 {
+            address[(skip + bit) / 8] |= 0x80 >> ((skip + bit) % 8);
+        }
     }
-    Ok((
-        prefix_string(&data[offset..offset + num_bytes], prefix_len, afi, false)?,
-        offset + num_bytes,
-    ))
+    let prefix = if skip == 0 {
+        prefix_string(&address[..max_bits / 8], prefix_len, afi, true)?
+    } else {
+        format!("{}/{skip}-{prefix_len}", Ipv6Addr::from(address))
+    };
+    Ok((prefix, offset + num_bytes))
 }
 
 fn prefix_string(raw: &[u8], prefix_len: usize, afi: u16, mask: bool) -> Result<String, ()> {
@@ -215,8 +229,8 @@ fn parse_ext_communities(data: &[u8]) -> Vec<String> {
         } else if (t, s) == (0x80, 0x07) {
             actions.push(format!(
                 "traffic-action(sample={},terminal={})",
-                if c[7] & 0x02 != 0 {"True"} else {"False"},
-                if c[7] & 0x01 != 0 {"True"} else {"False"}
+                if c[7] & 0x02 != 0 { "True" } else { "False" },
+                if c[7] & 0x01 != 0 { "True" } else { "False" }
             ));
         } else if (t, s) == (0x80, 0x08) {
             actions.push(format!(
@@ -318,8 +332,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ipv6_prefix_offsets_and_padding() {
+        assert_eq!(
+            parse_prefix(&[32, 0, 0x20, 1, 0x0d, 0xb8], 0, AFI_IPV6),
+            Ok(("2001:db8::/32".into(), 6))
+        );
+        assert_eq!(
+            parse_prefix(&[32, 16, 0x0d, 0xb8], 0, AFI_IPV6),
+            Ok(("0:db8::/16-32".into(), 4))
+        );
+        assert_eq!(
+            parse_prefix(&[9, 5, 0xff], 0, AFI_IPV6),
+            Ok(("780::/5-9".into(), 3))
+        );
+        assert_eq!(parse_prefix(&[0, 0], 0, AFI_IPV6), Ok(("::/0".into(), 2)));
+        for data in [&[32][..], &[32, 33], &[32, 32], &[0, 1], &[32, 0, 0x20]] {
+            assert!(parse_prefix(data, 0, AFI_IPV6).is_err());
+        }
+        assert_eq!(
+            components(&[1, 32, 0, 0x20, 1, 0x0d, 0xb8, 3, 0x81, 6], AFI_IPV6).unwrap(),
+            json!({"dst-prefix":"2001:db8::/32","ip-proto":["=tcp(6)"]})
+        );
+    }
+
+    #[test]
     fn rejects_oversized_flowspec_prefix() {
         assert!(parse_prefix(&[40, 203, 0, 113, 1, 2], 0, AFI_IPV4).is_err());
+    }
+
+    #[test]
+    fn logical_operators_are_preserved_for_numeric_and_bitmask_conditions() {
+        assert_eq!(
+            components(&[4, 0x43, 80, 0xc5, 90], AFI_IPV4).unwrap(),
+            json!({"port":[">=80","AND <=90"]})
+        );
+        assert_eq!(
+            components(&[9, 0x01, 2, 0xc1, 16], AFI_IPV4).unwrap(),
+            json!({"tcp-flags":["all(syn)","AND all(ack)"]})
+        );
+        assert_eq!(
+            components(&[9, 0x01, 2, 0x81, 16], AFI_IPV4).unwrap(),
+            json!({"tcp-flags":["all(syn)","OR all(ack)"]})
+        );
     }
 
     #[test]

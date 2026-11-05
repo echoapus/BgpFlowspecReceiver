@@ -27,7 +27,7 @@ has been removed. Its parser outputs are preserved as Rust regression fixtures.
 - **All standard FlowSpec actions** — rate-limit (bps/pps), discard, redirect-to-VRF, redirect-to-IP, DSCP mark, traffic-action
 - **4-byte ASN** — `AS_TRANS`, `CAP_4BYTE_ASN`, `AS4_PATH` (RFC 6793)
 - **Hold-timer enforcement** — session resets on expiry
-- **JSON RIB persistence** — debounced atomic writes to a file (`--json-output`)
+- **JSON RIB persistence** — periodic atomic writes to a file (`--json-output`)
 - **Web UI** — sortable route table, live log with filter chips, analytics, packet capture viewer, `show ip bgp <ip>` longest-prefix-match search
 
 ---
@@ -182,8 +182,8 @@ In addition to the Web UI, `bgpx` exposes HTTP endpoints:
 | RFC 6793 | 4-Byte ASN | ✅ Full | Capability 65, `AS_TRANS`, 4-octet `AS_PATH`, `AS4_PATH` merging, `AS4_AGGREGATOR`. |
 | RFC 7606 | Revised UPDATE Error Handling | 🟡 Partial | Attribute discard / preservation of raw hex on malformed attributes without session drop. **Unimplemented**: Full formal treat-as-withdraw state machine. |
 | RFC 8092 | BGP Large Communities | ✅ Full | 12-octet large communities (`admin:data1:data2`). |
-| RFC 8955 | IPv4 FlowSpec | 🟡 Partial | All component types (1–12) and actions (rate-limit bps/pps, discard, redirect to VRF/IP, DSCP mark, sample/terminal). **Unimplemented**: Strict ascending component ordering check (Section 5.1), FlowSpec route validation against unicast RIB (Section 6), explicit AND/OR operator grouping in UI. |
-| RFC 8956 | IPv6 FlowSpec | 🟡 Partial | Component types 1–13 (including flow-label) and IPv6 redirect actions. **Unimplemented**: Prefix offset octet (Section 3.2; currently decodes `[length][prefix]`, offset $\ne 0$ is unsupported). |
+| RFC 8955 | IPv4 FlowSpec | 🟡 Partial | All component types (1–12) and actions (rate-limit bps/pps, discard, redirect to VRF/IP, DSCP mark, sample/terminal). **Unimplemented**: Strict ascending component ordering check (Section 5.1), FlowSpec route validation against unicast RIB (Section 6), operator precedence grouping in UI (AND/OR markers are preserved). |
+| RFC 8956 | IPv6 FlowSpec | 🟡 Partial | Component types 1–13 (including flow-label) and IPv6 redirect actions. IPv6 prefix offsets are decoded as `address/offset-length`; offset zero uses `address/length`. |
 | RFC 9184 | FlowSpec Redirect to IP | ✅ Full | Redirect-to-IP / copy-to-IP extended communities (`0x010C` / `0x000C`). |
 
 ### Out-of-Scope / Not Implemented RFCs

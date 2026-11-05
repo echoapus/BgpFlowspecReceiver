@@ -17,7 +17,7 @@ use tower::ServiceExt;
 
 #[test]
 fn parser_compatibility_fixtures() {
-    // Captured from the Python reference before removing the legacy backend.
+    // Captured from the Python reference; IPv6 offsets and AND/OR output corrected.
     let cases: Vec<Value> = include_str!("fixtures/parser.jsonl")
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
@@ -95,12 +95,41 @@ fn mixed_flowspec_and_redirect() {
     let parsed = wire::update(&update(&attrs, &[]), 2).unwrap();
     assert_eq!(
         parsed["announce"]["ipv4-flowspec"][0],
-        json!({"ip-proto":["=tcp(6)"],"dst-port":[">=1024","<=65535"],"tcp-flags":["all(syn)","not-all(ack)"],"dscp":["=63"],"fragment":["any(df,first-fragment)"]})
+        json!({"ip-proto":["=tcp(6)"],"dst-port":[">=1024","OR <=65535"],"tcp-flags":["all(syn)","OR not-all(ack)"],"dscp":["=63"],"fragment":["any(df,first-fragment)"]})
     );
     assert_eq!(parsed["actions"], json!(["redirect-to-ipv4=192.0.2.1"]));
     mp.pop();
     let body = update(&attr(14, &mp), &[]);
     assert!(wire::update(&body, 2).is_err());
+}
+
+#[test]
+fn flowspec_and_or_routes_remain_distinct() {
+    let app = App::new(None);
+    let parsed = |code, op| {
+        let mut mp = vec![0, 1, 133];
+        if code == 14 {
+            mp.extend([0, 0]);
+        }
+        mp.extend([5, 4, 3, 80, op, 90]);
+        wire::update(&update(&attr(code, &mp), &[]), 2).unwrap()
+    };
+    app.apply_update(parsed(14, 0x85), "192.0.2.1");
+    app.apply_update(parsed(14, 0xc5), "192.0.2.1");
+    assert_eq!(app.data.lock().unwrap().routes.len(), 2);
+    app.apply_update(parsed(15, 0xc5), "192.0.2.1");
+    let data = app.data.lock().unwrap();
+    assert_eq!(data.routes.len(), 1);
+    assert_eq!(
+        data.routes
+            .values()
+            .next()
+            .unwrap()
+            .match_
+            .as_ref()
+            .unwrap()["port"],
+        json!([">=80", "OR <=90"])
+    );
 }
 
 #[test]
@@ -135,6 +164,14 @@ async fn rib_http_stats_export_and_persistence() {
     assert_eq!(page["count"], 2);
     assert_eq!(page["routes"][0]["prefix"], "198.51.100.0/24");
     assert_eq!(page["stats"]["unicast"], 2);
+    let (_, page) = request(api.clone(), "/routes?page_size=1&sort=prefix&order=desc").await;
+    assert_eq!(page["routes"][0]["prefix"], "203.0.113.0/24");
+    let (_, page) = request(
+        api.clone(),
+        "/routes?page=2&page_size=1&sort=prefix&order=desc",
+    )
+    .await;
+    assert_eq!(page["routes"][0]["prefix"], "198.51.100.0/24");
     app.apply_update(wire::update(&body, 2).unwrap(), "192.0.2.1");
     assert_eq!(app.data.lock().unwrap().stats()["total"], 2);
     let (_, export) = request(api.clone(), "/routes/export?family=unicast").await;

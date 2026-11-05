@@ -9,14 +9,19 @@ use tokio::{
     sync::oneshot,
 };
 
+fn capture_filter(peer: std::net::Ipv4Addr, listen_port: u16) -> String {
+    format!("host {peer} and (port 179 or port {listen_port})")
+}
+
 pub async fn start(State(app): State<Shared>) -> Result<Json<Value>, ApiError> {
     let mut control = app.control.lock().await;
-    let peer = {
+    let (peer, listen_port) = {
         let data = app.data.lock().unwrap();
         if !data.running {
             return Err(bad("No active session"));
         }
-        data.config.as_ref().unwrap().peer_ip
+        let config = data.config.as_ref().unwrap();
+        (config.peer_ip, config.listen_port)
     };
     App::stop_task(&mut control.capture).await;
     let mut child = Command::new("tcpdump")
@@ -26,7 +31,7 @@ pub async fn start(State(app): State<Shared>) -> Result<Json<Value>, ApiError> {
             "-X",
             "-i",
             "any",
-            &format!("host {peer} and port 179"),
+            &capture_filter(peer, listen_port),
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -132,6 +137,14 @@ pub async fn stop(State(app): State<Shared>) -> Json<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_includes_active_and_passive_ports() {
+        assert_eq!(
+            capture_filter("192.0.2.1".parse().unwrap(), 9179),
+            "host 192.0.2.1 and (port 179 or port 9179)"
+        );
+    }
 
     #[test]
     fn packet_event_contains_bgp_type() {

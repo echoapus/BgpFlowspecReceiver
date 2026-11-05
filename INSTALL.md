@@ -73,7 +73,7 @@ The native API validates configuration before starting a session. Invalid
 ASNs, IP addresses, ports, hold times and retry delays are rejected.
 
 JSON output retains the existing behavior: it exports the current in-memory
-RIB, uses debounced atomic replacement, and flushes when stopping. It does
+RIB, uses periodic atomic replacement, and flushes when stopping. It does
 not restore routes from disk on startup.
 
 ## Docker

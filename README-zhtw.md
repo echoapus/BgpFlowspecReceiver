@@ -24,7 +24,7 @@ bgpx --local-as 65001 --router-id 192.0.2.2 --peer-ip 192.0.2.1 --peer-as 65000
 - **所有標準 FlowSpec actions** — rate-limit (bps/pps)、discard、redirect-to-VRF、redirect-to-IP、DSCP mark、traffic-action。
 - **4-byte ASN** — `AS_TRANS`, `CAP_4BYTE_ASN`, `AS4_PATH` (RFC 6793)。
 - **Hold-timer 強制執行** — timeout 時會重設 session。
-- **JSON RIB persistence** — 透過 debounced atomic write 將路由表儲存至檔案中 (`--json-output`)。
+- **JSON RIB persistence** — 透過 periodic atomic write 將路由表儲存至檔案中 (`--json-output`)。
 - **Web UI** — 支援排序的路由表、帶有 filter chips 的 live log、Analytics、packet capture 檢視器，以及針對 Unicast RIB 的 `show ip bgp <ip>` LPM (Longest Prefix Match) 搜尋。
 
 ---
@@ -170,8 +170,8 @@ docker run --rm -p 179:179 -p 8080:8080 bgpx
 | RFC 6793 | 4-Byte ASN | ✅ Full | Capability 65, `AS_TRANS`, 4-octet `AS_PATH`, `AS4_PATH` 合併, `AS4_AGGREGATOR`。 |
 | RFC 7606 | Revised UPDATE Error Handling | 🟡 Partial | 在不 drop session 的情況下 discard 錯誤屬性 / 保留 malformed attributes 的 raw hex。**未實作**：完整的 treat-as-withdraw state machine。 |
 | RFC 8092 | BGP Large Communities | ✅ Full | 12-octet large communities (`admin:data1:data2`)。 |
-| RFC 8955 | IPv4 FlowSpec | 🟡 Partial | 所有 component types (1–12) 與 actions (rate-limit bps/pps, discard, redirect to VRF/IP, DSCP mark, sample/terminal)。**未實作**：嚴格的 component 遞增排序檢查 (Section 5.1)、跟 unicast RIB 驗證的 FlowSpec route validation (Section 6)、Web UI 中明確的 AND/OR operator 分組。 |
-| RFC 8956 | IPv6 FlowSpec | 🟡 Partial | Component types 1–13 (包含 flow-label) 與 IPv6 redirect actions。**未實作**：Prefix offset byte (Section 3.2；目前解碼為 `[length][prefix]`，不支援 offset $\ne 0$)。 |
+| RFC 8955 | IPv4 FlowSpec | 🟡 Partial | 所有 component types (1–12) 與 actions (rate-limit bps/pps, discard, redirect to VRF/IP, DSCP mark, sample/terminal)。**未實作**：嚴格的 component 遞增排序檢查 (Section 5.1)、跟 unicast RIB 驗證的 FlowSpec route validation (Section 6)、Web UI 中 operator 優先順序分組（已保留 AND/OR 標記）。 |
+| RFC 8956 | IPv6 FlowSpec | 🟡 Partial | Component types 1–13 (包含 flow-label) 與 IPv6 redirect actions。IPv6 prefix offset 解碼為 `address/offset-length`；offset 為零時使用 `address/length`。 |
 | RFC 9184 | FlowSpec Redirect to IP | ✅ Full | Redirect-to-IP / copy-to-IP extended communities (`0x010C` / `0x000C`)。 |
 
 ### Out-of-Scope / Not Implemented RFCs

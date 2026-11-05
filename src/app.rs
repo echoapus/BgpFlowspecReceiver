@@ -57,6 +57,7 @@ pub struct App {
     pub control: tokio::sync::Mutex<Control>,
     pub events: broadcast::Sender<Arc<str>>,
     exports: Arc<Semaphore>,
+    persistence: Mutex<()>,
     pub shutdown: tokio::sync::watch::Sender<bool>,
 }
 
@@ -150,6 +151,7 @@ pub struct Data {
     pool: Pool,
     pub output: Option<String>,
     dirty: Option<Instant>,
+    revision: u64,
 }
 
 impl App {
@@ -182,11 +184,13 @@ impl App {
                 pool: Pool::default(),
                 output,
                 dirty: None,
+                revision: 0,
             }),
             control: tokio::sync::Mutex::new(Control::default()),
             // Short live buffer; lagging clients recover through a snapshot.
             events: broadcast::channel(64).0,
             exports: Arc::new(Semaphore::new(2)),
+            persistence: Mutex::new(()),
             shutdown: tokio::sync::watch::channel(false).0,
         })
     }
@@ -240,7 +244,8 @@ impl App {
     pub fn flush(&self, force: bool) -> std::io::Result<()> {
         // Snapshot Arc<Route> clones and release the lock before serializing to disk, so a
         // large RIB write doesn't hold apply_update() out for the whole file write.
-        let (path, routes) = {
+        let _persistence = self.persistence.lock().unwrap();
+        let (path, routes, revision) = {
             let data = self.data.lock().unwrap();
             if !force
                 && data
@@ -252,7 +257,11 @@ impl App {
             let Some(path) = data.output.clone() else {
                 return Ok(());
             };
-            (path, data.routes.values().cloned().collect::<Vec<_>>())
+            (
+                path,
+                data.routes.values().cloned().collect::<Vec<_>>(),
+                data.revision,
+            )
         };
         let tmp = format!("{path}.tmp");
         let mut file = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
@@ -267,10 +276,10 @@ impl App {
         file.flush()?;
         file.get_ref().sync_all()?;
         std::fs::rename(tmp, &path)?;
-        // ponytail: a mutation landing while this write was in flight already re-set dirty
-        // via insert()/remove(); clearing it here can race that back to None, but the next
-        // mutation re-marks it and the following periodic flush picks up the change.
-        self.data.lock().unwrap().dirty = None;
+        let mut data = self.data.lock().unwrap();
+        if data.revision == revision {
+            data.dirty = None;
+        }
         Ok(())
     }
 
@@ -459,6 +468,11 @@ impl App {
 }
 
 impl Data {
+    fn mark_dirty(&mut self) {
+        self.dirty.get_or_insert_with(Instant::now);
+        self.revision += 1;
+    }
+
     fn clear_history(&mut self) {
         self.history = VecDeque::new();
         self.history_bytes = 0;
@@ -532,13 +546,13 @@ impl Data {
         self.sequence += 1;
         self.ids.insert(id, self.sequence);
         self.routes.insert(self.sequence, Arc::new(route));
-        self.dirty = Some(Instant::now());
+        self.mark_dirty();
     }
     fn remove(&mut self, id: &str) -> bool {
         if let Some(seq) = self.ids.remove(id) {
             let route = self.routes.remove(&seq).unwrap();
             self.count(&route, false);
-            self.dirty = Some(Instant::now());
+            self.mark_dirty();
             true
         } else {
             false
@@ -546,7 +560,7 @@ impl Data {
     }
     pub fn clear(&mut self) {
         if !self.routes.is_empty() {
-            self.dirty = Some(Instant::now());
+            self.mark_dirty();
         }
         self.routes.clear();
         self.ids = HashMap::new();
@@ -603,12 +617,16 @@ async fn routes(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Json
     let family = family(&q)?;
     let page = q.page.unwrap_or(1).max(1) as usize;
     let size = q.page_size.unwrap_or(50).clamp(1, 500) as usize;
-    let data = app.data.lock().unwrap();
-    let mut rows: Vec<_> = data
-        .routes
-        .values()
-        .filter(|r| family == "total" || r.family == family)
-        .collect();
+    let (mut rows, stats) = {
+        let data = app.data.lock().unwrap();
+        let rows: Vec<_> = data
+            .routes
+            .values()
+            .filter(|r| family == "total" || r.family == family)
+            .cloned()
+            .collect();
+        (rows, data.stats())
+    };
     let sort = q
         .sort
         .as_deref()
@@ -645,7 +663,7 @@ async fn routes(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Json
     let count = rows.len();
     let start = page.saturating_sub(1).saturating_mul(size);
     Ok(Json(
-        json!({"page":page,"page_size":size,"count":count,"routes":rows.into_iter().skip(start).take(size).collect::<Vec<_>>(),"stats":data.stats()}),
+        json!({"page":page,"page_size":size,"count":count,"routes":rows.into_iter().skip(start).take(size).collect::<Vec<_>>(),"stats":stats}),
     ))
 }
 async fn export(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Response, ApiError> {
@@ -852,6 +870,26 @@ mod memory_tests {
             }),
             "192.0.2.1",
         );
+    }
+
+    #[test]
+    fn continuous_updates_do_not_postpone_persistence() {
+        let path = std::env::temp_dir().join(format!("bgpx-churn-{}.json", std::process::id()));
+        let app = App::new(Some(path.to_string_lossy().into_owned()));
+        announce(&app, 1);
+        let dirty = Instant::now() - Duration::from_secs(6);
+        app.data.lock().unwrap().dirty = Some(dirty);
+        announce(&app, 2);
+        assert_eq!(app.data.lock().unwrap().dirty, Some(dirty));
+        app.flush(false).unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["routes"][0]["as_path"], json!([2]));
+        assert!(app.data.lock().unwrap().dirty.is_none());
+        app.data.lock().unwrap().clear();
+        app.flush(true).unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["count"], 0);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
