@@ -9,6 +9,7 @@ RUN cargo build --locked --release
 FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends tcpdump ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/target/release/bgpx /usr/local/bin/bgpx
+COPY --from=build /app/web/locales /usr/local/locales
 EXPOSE 179 8080
 ENTRYPOINT ["bgpx"]
 CMD ["--host", "0.0.0.0", "--port", "8080"]

@@ -7,714 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-/* ── Reset & Base ── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg0:       #0f172a;
-  --bg1:       #1e293b;
-  --bg2:       #334155;
-  --bg3:       #475569;
-  --border:    #334155;
-  --text:      #f8fafc;
-  --text2:     #cbd5e1;
-  --text3:     #64748b;
-  --accent:    #38bdf8;
-  --green:     #34d399;
-  --yellow:    #fbbf24;
-  --red:       #f87171;
-  --orange:    #fb923c;
-  --purple:    #c084fc;
-  --green-bg:  rgba(52, 211, 153, 0.15);
-  --yellow-bg: rgba(251, 191, 36, 0.15);
-  --red-bg:    rgba(248, 113, 113, 0.15);
-  --orange-bg: rgba(251, 146, 60, 0.15);
-  --purple-bg: rgba(192, 132, 252, 0.15);
-  --accent-bg: rgba(56, 189, 248, 0.15);
-  --mono:      "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
-}
-html.light-theme {
-  --bg0:       #f8fafc;
-  --bg1:       #ffffff;
-  --bg2:       #f1f5f9;
-  --bg3:       #e2e8f0;
-  --border:    #e2e8f0;
-  --text:      #0f172a;
-  --text2:     #475569;
-  --text3:     #94a3b8;
-  --accent:    #0ea5e9;
-  --green:     #10b981;
-  --yellow:    #d97706;
-  --red:       #ef4444;
-  --orange:    #ea580c;
-  --purple:    #8b5cf6;
-  --green-bg:  rgba(16, 185, 129, 0.12);
-  --yellow-bg: rgba(217, 119, 6, 0.12);
-  --red-bg:    rgba(239, 68, 68, 0.12);
-  --orange-bg: rgba(234, 88, 12, 0.12);
-  --purple-bg: rgba(139, 92, 246, 0.12);
-  --accent-bg: rgba(14, 165, 233, 0.12);
-}
-html, body { height: 100%; }
-body {
-  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: var(--bg0);
-  color: var(--text);
-  font-size: 13px;
-  line-height: 1.5;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-/* ── Header ── */
-.header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 20px;
-  height: 48px;
-  background: var(--bg1);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.logo {
-  font-family: var(--mono);
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--accent);
-  letter-spacing: 2px;
-}
-.version { color: var(--text3); font-family: var(--mono); font-size: 11px; }
-.header-spacer { flex: 1; }
-
-.state-badge {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 4px 12px;
-  border-radius: 20px;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text2);
-  transition: all .3s;
-}
-.state-badge.established { border-color: var(--green); color: var(--green); }
-.state-badge.connecting  { border-color: var(--yellow); color: var(--yellow); }
-.state-badge.error       { border-color: var(--red); color: var(--red); }
-.dot {
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: var(--text3);
-  flex-shrink: 0;
-  transition: background .3s;
-}
-.established .dot { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
-.connecting  .dot { background: var(--yellow); animation: pulse .8s infinite; }
-.error       .dot { background: var(--red); }
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: .4; }
-}
-
-.peer-label {
-  color: var(--text2);
-  font-family: var(--mono);
-  font-size: 12px;
-}
-.peer-label span { color: var(--text); }
-
-/* SSE health dot */
-.sse-dot {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  background: var(--text3);
-  flex-shrink: 0;
-  transition: background .3s;
-  title: "SSE stream";
-}
-.sse-dot.live { background: var(--green); }
-.sse-dot.reconnecting { background: var(--yellow); animation: pulse .8s infinite; }
-
-/* ── Layout ── */
-.body {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
-}
-
-/* ── Sidebar ── */
-.sidebar {
-  width: 240px;
-  flex-shrink: 0;
-  background: var(--bg1);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  transition: width .2s, min-width .2s;
-}
-.sidebar.collapsed { width: 0; min-width: 0; overflow: hidden; }
-
-.sidebar-section {
-  padding: 16px;
-  border-bottom: 1px solid var(--border);
-}
-.sidebar-section h3 {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 1.5px;
-  color: var(--accent);
-  margin-bottom: 12px;
-}
-
-/* ── Form ── */
-.field { margin-bottom: 10px; }
-.field label {
-  display: block;
-  font-size: 11px;
-  color: var(--text2);
-  margin-bottom: 3px;
-}
-.field input {
-  width: 100%;
-  padding: 6px 8px;
-  background: var(--bg0);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 12px;
-  outline: none;
-  transition: all .2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.field input:focus  { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
-.field input:disabled { opacity: .5; cursor: not-allowed; }
-.field input.invalid { border-color: var(--red); }
-
-/* ── Buttons ── */
-.btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  padding: 7px 12px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all .2s cubic-bezier(0.4, 0, 0.2, 1);
-  margin-bottom: 6px;
-}
-.btn:disabled { opacity: .4; cursor: not-allowed; }
-.btn-start {
-  background: var(--green);
-  color: var(--bg0);
-  border-color: var(--green);
-}
-.btn-start:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 12px var(--green-bg); filter: brightness(1.05); }
-.btn-stop {
-  background: transparent;
-  color: var(--red);
-  border-color: var(--red);
-}
-.btn-stop:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 12px var(--red-bg); background: var(--red-bg); }
-
-/* ── Stats ── */
-.stat-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 3px 0;
-  color: var(--text2);
-  font-size: 12px;
-}
-.stat-val {
-  font-family: var(--mono);
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text);
-}
-.stat-val.nonzero { color: var(--accent); }
-
-/* ── Peer info ── */
-.peer-info-grid {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 3px 10px;
-  font-size: 11px;
-  font-family: var(--mono);
-}
-.peer-info-grid .k { color: var(--text2); white-space: nowrap; }
-.peer-info-grid .v { color: var(--text); word-break: break-all; }
-
-/* ── Main panel ── */
-.main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--bg0);
-}
-
-/* ── Tab bar ── */
-.tab-bar {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  padding: 0 8px 0 4px;
-  background: var(--bg1);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  height: 40px;
-}
-.sidebar-toggle {
-  background: none;
-  border: none;
-  color: var(--text3);
-  font-size: 14px;
-  padding: 0 8px;
-  cursor: pointer;
-  line-height: 40px;
-  transition: color .15s;
-}
-.sidebar-toggle:hover { color: var(--text2); }
-.tab-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 16px;
-  height: 100%;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text2);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all .15s;
-  margin-bottom: -1px;
-}
-.tab-btn:hover  { color: var(--text); }
-.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
-.tab-count {
-  background: var(--bg3);
-  color: var(--text2);
-  font-family: var(--mono);
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 10px;
-  min-width: 18px;
-  text-align: center;
-}
-.tab-btn.active .tab-count { background: var(--accent-bg); color: var(--accent); }
-
-.tab-spacer { flex: 1; }
-.search-input {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 11px;
-  padding: 4px 8px;
-  width: 170px;
-}
-.search-input:focus { outline: none; border-color: var(--accent); }
-.search-result {
-  position: fixed;
-  top: 48px;
-  right: 16px;
-  width: 380px;
-  max-height: 70vh;
-  overflow: auto;
-  background: var(--bg1);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.25);
-  padding: 12px;
-  z-index: 50;
-}
-.search-result h4 {
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--text2);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.search-result .close-btn { cursor: pointer; color: var(--text3); font-size: 14px; }
-.search-result .close-btn:hover { color: var(--text); }
-.search-result table { width: 100%; border-collapse: collapse; }
-.search-result td {
-  padding: 3px 4px;
-  font-family: var(--mono);
-  font-size: 11px;
-  vertical-align: top;
-  word-break: break-word;
-}
-.search-result td:first-child { color: var(--text2); white-space: nowrap; padding-right: 8px; }
-.icon-btn {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text2);
-  font-size: 11px;
-  padding: 4px 10px;
-  cursor: pointer;
-  transition: all .15s;
-  margin-left: 6px;
-}
-.icon-btn:hover { border-color: var(--accent); color: var(--accent); }
-.icon-btn.capturing {
-  border-color: var(--orange);
-  color: var(--orange);
-  animation: pulse .8s infinite;
-}
-.badge-capture { background: var(--orange-bg); color: var(--orange); }
-.badge-packet  { background: var(--accent-bg); color: var(--accent); }
-
-/* ── Tab content ── */
-.tab-content { display: none; flex: 1; overflow: hidden; }
-.tab-content.active { display: flex; flex-direction: column; }
-
-/* ── Filter bar ── */
-.filter-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: var(--bg1);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  flex-wrap: wrap;
-}
-.filter-chip {
-  padding: 2px 10px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: none;
-  color: var(--text2);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all .15s;
-  font-family: var(--mono);
-}
-.filter-chip:hover { border-color: var(--text2); color: var(--text); }
-.filter-chip.active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
-.filter-label { font-size: 11px; color: var(--text3); margin-right: 2px; }
-
-/* ── Routes table ── */
-.routes-wrap { flex: 1; overflow: auto; }
-.routes-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-.routes-table th {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  background: var(--bg1);
-  color: var(--text2);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .5px;
-  padding: 10px 14px;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-  cursor: pointer;
-  user-select: none;
-}
-.routes-table th:hover { color: var(--text); }
-.sort-arrow { margin-left: 4px; color: var(--text3); }
-.routes-table td {
-  padding: 9px 14px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-.routes-table tr:hover td { background: var(--bg1); }
-.routes-table .empty td {
-  text-align: center;
-  color: var(--text3);
-  padding: 40px;
-  font-style: italic;
-}
-/* Row flash on update */
-@keyframes rowFlash {
-  0%   { background: var(--yellow-bg); }
-  100% { background: transparent; }
-}
-.row-flash td { animation: rowFlash .8s ease-out; }
-
-.id-cell {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text2);
-  white-space: nowrap;
-}
-.afi-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 700;
-}
-.afi-badge.ipv4 { background: var(--accent-bg); color: var(--accent); }
-.afi-badge.ipv6 { background: var(--purple-bg); color: var(--purple); }
-
-.match-cell { font-family: var(--mono); font-size: 11px; }
-.match-inner { overflow: hidden; max-height: 5.4em; position: relative; } /* ponytail: 3 items * 1.8 line-height */
-.match-inner.expanded { max-height: none; }
-.match-item { display: block; line-height: 1.8; }
-.match-key  { color: var(--text2); }
-.match-val  { color: var(--text); }
-.match-more {
-  font-size: 10px;
-  color: var(--accent);
-  cursor: pointer;
-  margin-top: 2px;
-  display: inline-block;
-}
-
-.action-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 700;
-  margin: 2px 2px 2px 0;
-  white-space: nowrap;
-}
-.action-discard     { background: var(--red-bg); color: var(--red);    }
-.action-rate-limit  { background: var(--yellow-bg); color: var(--yellow); }
-.action-redirect    { background: var(--green-bg); color: var(--green);  }
-.action-mark        { background: var(--purple-bg); color: var(--purple); }
-.action-unknown-ec  { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--border); }
-.action-other       { background: var(--bg3);           color: var(--text2);  }
-
-.ts-cell {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text3);
-  white-space: nowrap;
-}
-.ts-cell[title] { cursor: default; border-bottom: 1px dotted var(--text3); }
-
-/* Expandable row detail */
-.route-detail-row { display: none; }
-.route-detail-row.open { display: table-row; }
-.route-detail-cell {
-  background: var(--bg1) !important;
-  padding: 10px 14px 10px 40px !important;
-}
-.route-detail-inner {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text2);
-  white-space: pre-wrap;
-  word-break: break-all;
-  line-height: 1.7;
-}
-
-/* ── Log panel ── */
-.log-wrap {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 0;
-  font-family: var(--mono);
-  font-size: 12px;
-}
-.log-entry {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 3px 16px;
-  line-height: 1.6;
-  border-left: 2px solid transparent;
-  cursor: pointer;
-  transition: background .1s;
-}
-.log-entry:hover { background: var(--bg1); }
-.log-entry.expanded { background: var(--bg1); border-left-color: var(--accent); }
-.log-entry.hidden { display: none; }
-
-.log-ts {
-  color: var(--text3);
-  font-size: 11px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.log-badge {
-  display: inline-block;
-  padding: 1px 7px;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 700;
-  flex-shrink: 0;
-  text-transform: uppercase;
-}
-.badge-session  { background: var(--green-bg); color: var(--green);  }
-.badge-announce { background: var(--accent-bg); color: var(--accent); }
-.badge-withdraw { background: var(--orange-bg); color: var(--orange); }
-.badge-error    { background: var(--red-bg); color: var(--red);    }
-.badge-warning  { background: var(--yellow-bg); color: var(--yellow); }
-
-.log-msg { color: var(--text); flex: 1; word-break: break-all; }
-.log-detail {
-  display: none;
-  margin: 4px 0 4px 120px;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 14px;
-  color: var(--text2);
-  font-size: 11px;
-  white-space: pre-wrap;
-  word-break: break-all;
-  line-height: 1.7;
-  position: relative;
-}
-.log-entry.expanded + .log-detail { display: block; }
-.copy-btn {
-  position: absolute;
-  top: 6px; right: 8px;
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text3);
-  font-size: 10px;
-  padding: 2px 6px;
-  cursor: pointer;
-  transition: all .15s;
-}
-.copy-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-.log-empty {
-  padding: 40px;
-  text-align: center;
-  color: var(--text3);
-  font-style: italic;
-}
-
-/* ── Scrollbar ── */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--border); }
-
-/* ── Notification toast ── */
-.toast-wrap {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  z-index: 1000;
-}
-.toast {
-  padding: 10px 16px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg2);
-  color: var(--text);
-  font-size: 12px;
-  max-width: 280px;
-  animation: slideIn .2s ease;
-}
-.toast.error { border-color: var(--red); }
-.toast.ok    { border-color: var(--green); }
-@keyframes slideIn {
-  from { transform: translateX(20px); opacity: 0; }
-  to   { transform: translateX(0);    opacity: 1; }
-}
-.theme-section {
-  margin-top: auto;
-  border-top: 1px solid var(--border);
-  border-bottom: none;
-  padding: 12px 16px;
-}
-.btn-theme {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  padding: 6px 12px;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all .15s;
-}
-.btn-theme:hover {
-  background: var(--bg3);
-}
-.analytics-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  padding: 16px;
-  overflow: auto;
-}
-.analytics-card {
-  background: var(--bg1);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
-}
-.analytics-card h3 {
-  color: var(--text2);
-  font-size: 11px;
-  margin-bottom: 10px;
-  text-transform: uppercase;
-}
-.analytics-value {
-  color: var(--accent);
-  font-size: 28px;
-  font-weight: 700;
-}
-.analytics-list {
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.8;
-  word-break: break-word;
-}
-.analytics-bar {
-  display: grid;
-  grid-template-columns: minmax(70px, auto) 1fr auto;
-  gap: 8px;
-  align-items: center;
-  margin: 7px 0;
-}
-.analytics-bar-track {
-  height: 7px;
-  overflow: hidden;
-  border-radius: 4px;
-  background: var(--bg3);
-}
-.analytics-bar-fill {
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent);
-}
-.analytics-bar-count { color: var(--text3); }
-</style>
+<link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
 
@@ -723,7 +16,7 @@ body {
   <span class="logo">bgpx</span>
   <span class="version">v26.9.21</span>
   <div class="header-spacer"></div>
-  <div id="sse-dot" class="sse-dot reconnecting" title="SSE stream: connecting…"></div>
+  <div id="sse-dot" class="sse-dot reconnecting" data-i18n-title="sse.connecting" title="SSE stream: connecting…"></div>
   <div class="state-badge" id="state-badge">
     <span class="dot"></span>
     <span id="state-label">IDLE</span>
@@ -738,89 +31,90 @@ body {
   <aside class="sidebar" id="sidebar">
 
     <div class="sidebar-section">
-      <h3>BGP Configuration</h3>
+      <h3 data-i18n="sidebar.bgp_config">BGP Configuration</h3>
 
       <div class="field">
-        <label>Local ASN</label>
+        <label data-i18n="form.local_as">Local ASN</label>
         <input id="f-local-as" type="number" placeholder="65001" min="1" max="4294967295">
       </div>
       <div class="field">
-        <label>Router ID</label>
+        <label data-i18n="form.router_id">Router ID</label>
         <input id="f-router-id" type="text" placeholder="192.0.2.2">
       </div>
       <div class="field">
-        <label>Peer IP</label>
+        <label data-i18n="form.peer_ip">Peer IP</label>
         <input id="f-peer-ip" type="text" placeholder="192.0.2.1">
       </div>
       <div class="field">
-        <label>Peer ASN</label>
+        <label data-i18n="form.peer_as">Peer ASN</label>
         <input id="f-peer-as" type="number" placeholder="65000" min="1" max="4294967295">
       </div>
       <div class="field">
-        <label>Hold Time (s)</label>
+        <label data-i18n="form.hold_time">Hold Time (s)</label>
         <input id="f-hold-time" type="number" value="90" min="3" max="65535">
       </div>
       <div class="field">
-        <label>Reconnect Delay (s)</label>
+        <label data-i18n="form.reconnect_delay">Reconnect Delay (s)</label>
         <input id="f-reconnect" type="number" value="5" min="0">
       </div>
       <div class="field">
-        <label>Connect Timeout (s)</label>
+        <label data-i18n="form.connect_timeout">Connect Timeout (s)</label>
         <input id="f-connect-timeout" type="number" value="5" min="1" step="0.5">
       </div>
       <div class="field">
-        <label>Active Retry (s)</label>
+        <label data-i18n="form.active_retry">Active Retry (s)</label>
         <input id="f-active-retry" type="number" value="1" min="0.1" step="0.1">
       </div>
       <div class="field">
-        <label>JSON Output File (optional)</label>
+        <label data-i18n="form.json_output">JSON Output File (optional)</label>
         <input id="f-json-output" type="text" placeholder="/tmp/routes.json">
       </div>
       <div class="field">
-        <label>Listen Port
-          <span style="font-size:10px;color:var(--text3);font-weight:normal">
+        <label><span data-i18n="form.listen_port">Listen Port</span>
+          <span style="font-size:10px;color:var(--text3);font-weight:normal" data-i18n="form.listen_port_mode">
             (auto: active + passive)
           </span>
         </label>
         <input id="f-listen-port" type="number" value="179" min="1" max="65535">
-        <div style="font-size:11px;color:var(--text2);margin-top:4px;line-height:1.5">
+        <div style="font-size:11px;color:var(--text2);margin-top:4px;line-height:1.5" data-i18n-html="form.listen_port_hint">
           bgpx connects out <em>and</em> listens simultaneously.<br>
           Port 179 needs root or
           <code style="color:var(--accent)">setcap cap_net_bind_service+ep</code>
         </div>
       </div>
 
-      <button class="btn btn-start" id="start-btn" onclick="startSession()">
+      <button class="btn btn-start" id="start-btn" onclick="startSession()" data-i18n="btn.start_session">
         ▶ Start Session
       </button>
-      <button class="btn btn-stop" id="stop-btn" onclick="stopSession()" disabled>
+      <button class="btn btn-stop" id="stop-btn" onclick="stopSession()" disabled data-i18n="btn.stop_session">
         ■ Stop Session
       </button>
     </div>
 
     <div class="sidebar-section">
-      <h3>RIB Summary</h3>
+      <h3 data-i18n="sidebar.rib_summary">RIB Summary</h3>
       <div class="stat-row">
-        <span>Total routes</span>
+        <span data-i18n="stats.total_routes">Total routes</span>
         <span class="stat-val" id="s-total">0</span>
       </div>
       <div class="stat-row">
-        <span>Unicast</span>
+        <span data-i18n="stats.unicast">Unicast</span>
         <span class="stat-val" id="s-unicast">0</span>
       </div>
       <div class="stat-row">
-        <span>FlowSpec</span>
+        <span data-i18n="stats.flowspec">FlowSpec</span>
         <span class="stat-val" id="s-flowspec">0</span>
       </div>
     </div>
 
     <div class="sidebar-section" id="peer-info-section" style="display:none">
-      <h3>Negotiated Session</h3>
+      <h3 data-i18n="sidebar.negotiated_session">Negotiated Session</h3>
       <div class="peer-info-grid" id="peer-info-grid"></div>
     </div>
 
-    <!-- ponytail: theme switcher at the bottom of the sidebar -->
+    <!-- ponytail: language & theme switcher at the bottom of the sidebar -->
     <div class="sidebar-section theme-section">
+      <select class="lang-select" id="lang-select" onchange="setLang(this.value)" aria-label="Language"></select>
       <button class="btn-theme" id="theme-toggle-btn" onclick="toggleTheme()">☀️ Light Mode</button>
     </div>
 
@@ -831,47 +125,54 @@ body {
 
     <!-- Tab bar -->
     <div class="tab-bar">
-      <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">‹</button>
+      <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" data-i18n-title="tab.toggle_sidebar" title="Toggle sidebar">‹</button>
       <button class="tab-btn active" id="tab-total-btn" onclick="switchTab('total')">
-        Total <span class="tab-count" id="total-count">0</span>
+        <span data-i18n="tab.total">Total</span> <span class="tab-count" id="total-count">0</span>
       </button>
       <button class="tab-btn" id="tab-unicast-btn" onclick="switchTab('unicast')">
-        Unicast <span class="tab-count" id="unicast-count">0</span>
+        <span data-i18n="tab.unicast">Unicast</span> <span class="tab-count" id="unicast-count">0</span>
       </button>
       <button class="tab-btn" id="tab-flowspec-btn" onclick="switchTab('flowspec')">
-        FlowSpec <span class="tab-count" id="flowspec-count">0</span>
+        <span data-i18n="tab.flowspec">FlowSpec</span> <span class="tab-count" id="flowspec-count">0</span>
       </button>
       <button class="tab-btn" id="tab-analytics-btn" onclick="switchTab('analytics')">
-        Analytics
+        <span data-i18n="tab.analytics">Analytics</span>
       </button>
       <button class="tab-btn" id="tab-log-btn" onclick="switchTab('log')">
-        Live Log <span class="tab-count" id="log-count">0</span>
+        <span data-i18n="tab.live_log">Live Log</span> <span class="tab-count" id="log-count">0</span>
       </button>
       <div class="tab-spacer"></div>
-      <input class="search-input" id="search-ip" type="text" placeholder="show ip bgp <ip>"
+      <input class="search-input" id="search-ip" type="text" data-i18n-placeholder="search.placeholder" placeholder="show ip bgp <ip>"
              onkeydown="if(event.key==='Enter')searchRoute()">
-      <button class="icon-btn" onclick="searchRoute()" title="Longest-prefix match lookup">🔍 Search</button>
-      <button class="icon-btn" id="capture-btn" onclick="toggleCapture()">◉ Capture</button>
-      <button class="icon-btn" id="export-btn" onclick="exportRoutes()" title="Download RIB as JSON">⬇ Export</button>
-      <button class="icon-btn" id="clear-btn" onclick="clearLog()" style="display:none">Clear log</button>
+      <button class="icon-btn" onclick="searchRoute()" data-i18n="btn.search" data-i18n-title="search.tooltip" title="Longest-prefix match lookup">🔍 Search</button>
+      <button class="icon-btn" id="capture-btn" onclick="toggleCapture()" data-i18n="btn.capture">◉ Capture</button>
+      <button class="icon-btn" id="export-btn" onclick="exportRoutes()" data-i18n="btn.export" data-i18n-title="export.tooltip" title="Download RIB as JSON">⬇ Export</button>
+      <button class="icon-btn" id="clear-btn" onclick="clearLog()" style="display:none" data-i18n="btn.clear_log">Clear log</button>
     </div>
 
     <!-- Routes tab -->
     <div class="tab-content active" id="tab-routes">
+      <div class="route-filter-bar">
+        <input class="route-filter-input" id="route-filter-input" type="text"
+               data-i18n-placeholder="routes.filter_placeholder"
+               placeholder="Filter routes (prefix, AS, community, next-hop, action)…"
+               oninput="onRouteFilterInput(this.value)">
+        <button class="icon-btn" id="route-filter-clear" onclick="clearRouteFilter()" style="display:none;margin-left:0;" data-i18n="routes.filter_clear">Clear filter</button>
+      </div>
       <div class="routes-wrap">
         <table class="routes-table" id="routes-table">
           <thead id="routes-head"></thead>
           <tbody id="routes-tbody">
-            <tr class="empty"><td colspan="6">No routes — configure and start a session</td></tr>
+            <tr class="empty"><td colspan="6" data-i18n="routes.empty_initial">No routes — configure and start a session</td></tr>
           </tbody>
         </table>
       </div>
       <!-- ponytail: pagination controls -->
       <div class="pagination-bar" id="pagination-bar" style="padding: 8px 16px; background: var(--bg1); border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
-        <span id="page-info" style="color: var(--text2); font-size: 12px;">No routes</span>
+        <span id="page-info" style="color: var(--text2); font-size: 12px;" data-i18n="routes.no_routes">No routes</span>
         <div style="display: flex; gap: 6px;">
-          <button class="icon-btn" id="btn-prev-page" onclick="prevPage()" disabled style="margin: 0;">&lt; Prev</button>
-          <button class="icon-btn" id="btn-next-page" onclick="nextPage()" disabled style="margin: 0;">Next &gt;</button>
+          <button class="icon-btn" id="btn-prev-page" onclick="prevPage()" disabled style="margin: 0;" data-i18n="pagination.prev">&lt; Prev</button>
+          <button class="icon-btn" id="btn-next-page" onclick="nextPage()" disabled style="margin: 0;" data-i18n="pagination.next">Next &gt;</button>
         </div>
       </div>
     </div>
@@ -879,34 +180,39 @@ body {
     <!-- Analytics tab -->
     <div class="tab-content" id="tab-analytics">
       <div class="analytics-grid">
-        <div class="analytics-card"><h3>Total routes</h3><div class="analytics-value" id="a-total">0</div></div>
-        <div class="analytics-card"><h3>Unicast</h3><div class="analytics-value" id="a-unicast">0</div></div>
-        <div class="analytics-card"><h3>FlowSpec</h3><div class="analytics-value" id="a-flowspec">0</div></div>
-        <div class="analytics-card"><h3>IPv4 / IPv6</h3><div class="analytics-list" id="a-afi">IPv4 0<br>IPv6 0</div></div>
-        <div class="analytics-card"><h3>Updates</h3><div class="analytics-list" id="a-events">Announce 0<br>Withdraw 0</div></div>
-        <div class="analytics-card"><h3>Top communities</h3><div class="analytics-list" id="a-communities">—</div></div>
-        <div class="analytics-card"><h3>Origin AS</h3><div class="analytics-list" id="a-origin-as">—</div></div>
-        <div class="analytics-card"><h3>Top next hops</h3><div class="analytics-list" id="a-next-hops">—</div></div>
-        <div class="analytics-card"><h3>Prefix lengths</h3><div class="analytics-list" id="a-prefix-lengths">—</div></div>
-        <div class="analytics-card"><h3>FlowSpec actions</h3><div class="analytics-list" id="a-actions">—</div></div>
-        <div class="analytics-card"><h3>FlowSpec protocols</h3><div class="analytics-list" id="a-protocols">—</div></div>
-        <div class="analytics-card"><h3>FlowSpec ports</h3><div class="analytics-list" id="a-ports">—</div></div>
+        <div class="analytics-card"><h3 data-i18n="analytics.total_routes">Total routes</h3><div class="analytics-value" id="a-total">0</div></div>
+        <div class="analytics-card"><h3 data-i18n="analytics.unicast">Unicast</h3><div class="analytics-value" id="a-unicast">0</div></div>
+        <div class="analytics-card"><h3 data-i18n="analytics.flowspec">FlowSpec</h3><div class="analytics-value" id="a-flowspec">0</div></div>
+        <div class="analytics-card"><h3 data-i18n="analytics.ipv4_ipv6">IPv4 / IPv6</h3><div class="analytics-list" id="a-afi">IPv4 0<br>IPv6 0</div></div>
+        <div class="analytics-card"><h3 data-i18n="analytics.updates">Updates</h3><div class="analytics-list" id="a-events">Announce 0<br>Withdraw 0</div></div>
+        <div class="analytics-card"><h3 data-i18n="analytics.top_communities">Top communities</h3><div class="analytics-list" id="a-communities">—</div></div>
+        <div class="analytics-card"><h3 data-i18n="analytics.origin_as">Origin AS</h3><div class="analytics-list" id="a-origin-as">—</div></div>
+        <div class="analytics-card"><h3 data-i18n="analytics.top_next_hops">Top next hops</h3><div class="analytics-list" id="a-next-hops">—</div></div>
+        <div class="analytics-card"><h3 data-i18n="analytics.prefix_lengths">Prefix lengths</h3><div class="analytics-list" id="a-prefix-lengths">—</div></div>
+        <div class="analytics-card"><h3 data-i18n="analytics.flowspec_actions">FlowSpec actions</h3><div class="analytics-list" id="a-actions">—</div></div>
+        <div class="analytics-card"><h3 data-i18n="analytics.flowspec_protocols">FlowSpec protocols</h3><div class="analytics-list" id="a-protocols">—</div></div>
+        <div class="analytics-card"><h3 data-i18n="analytics.flowspec_ports">FlowSpec ports</h3><div class="analytics-list" id="a-ports">—</div></div>
       </div>
     </div>
 
     <!-- Log tab -->
     <div class="tab-content" id="tab-log">
       <div class="filter-bar">
-        <span class="filter-label">Filter:</span>
-        <button class="filter-chip active" data-filter="all"     onclick="setLogFilter('all')">ALL</button>
-        <button class="filter-chip"        data-filter="session" onclick="setLogFilter('session')">SESSION</button>
-        <button class="filter-chip"        data-filter="announce"onclick="setLogFilter('announce')">ANNOUNCE</button>
-        <button class="filter-chip"        data-filter="withdraw"onclick="setLogFilter('withdraw')">WITHDRAW</button>
-        <button class="filter-chip"        data-filter="error"   onclick="setLogFilter('error')">ERROR</button>
-        <button class="filter-chip"        data-filter="capture" onclick="setLogFilter('capture')">PCAP</button>
+        <span class="filter-label" data-i18n="log.filter_label">Filter:</span>
+        <button class="filter-chip active" data-filter="all"      onclick="setLogFilter('all')"      data-i18n="log.filter_all">ALL</button>
+        <button class="filter-chip"        data-filter="session"  onclick="setLogFilter('session')"  data-i18n="log.filter_session">SESSION</button>
+        <button class="filter-chip"        data-filter="announce" onclick="setLogFilter('announce')" data-i18n="log.filter_announce">ANNOUNCE</button>
+        <button class="filter-chip"        data-filter="withdraw" onclick="setLogFilter('withdraw')" data-i18n="log.filter_withdraw">WITHDRAW</button>
+        <button class="filter-chip"        data-filter="error"    onclick="setLogFilter('error')"    data-i18n="log.filter_error">ERROR</button>
+        <button class="filter-chip"        data-filter="capture"  onclick="setLogFilter('capture')"  data-i18n="log.filter_pcap">PCAP</button>
+        <input class="log-search-input" id="log-search-input" type="text"
+               data-i18n-placeholder="log.search_placeholder"
+               placeholder="Filter log messages…"
+               oninput="setLogSearch(this.value)">
+        <button class="filter-chip" id="log-pause-btn" onclick="toggleLogPause()" data-i18n="log.pause">⏸ Pause</button>
       </div>
       <div class="log-wrap" id="log-wrap">
-        <div class="log-empty" id="log-empty">Connecting to event stream…</div>
+        <div class="log-empty" id="log-empty" data-i18n="log.connecting">Connecting to event stream…</div>
       </div>
     </div>
 
@@ -917,861 +223,12 @@ body {
 <div class="toast-wrap" id="toasts"></div>
 <div class="search-result" id="search-result" style="display:none"></div>
 
-<script>
-// ── Theme (Light/Dark) ──────────────────────────────────────────────────────
-function toggleTheme() {
-  const isLight = document.documentElement.classList.toggle('light-theme');
-  localStorage.setItem('theme', isLight ? 'light' : 'dark');
-  updateThemeButton(isLight);
-}
-
-function updateThemeButton(isLight) {
-  const btn = document.getElementById('theme-toggle-btn');
-  if (btn) {
-    btn.innerHTML = isLight ? '🌙 Dark Mode' : '☀️ Light Mode';
-  }
-}
-
-(function() {
-  const savedTheme = localStorage.getItem('theme');
-  const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
-  const isLight = savedTheme === 'light' || (!savedTheme && prefersLight);
-  if (isLight) {
-    document.documentElement.classList.add('light-theme');
-  }
-  document.addEventListener('DOMContentLoaded', () => {
-    updateThemeButton(isLight);
-  });
-})();
-
-// ── State ──────────────────────────────────────────────────────────────────
-let routeRows       = [];         // current server-side page only
-let routeTotal      = 0;
-let ribStats        = { total:0, unicast:0, flowspec:0, ipv4:0, ipv6:0, analytics:{} };
-let sessionRunning  = false;
-let logCount        = 0;
-let autoScroll      = true;
-let logFilter       = 'all';
-let evtSource       = null;
-let sidebarOpen     = true;
-let currentView     = 'total';
-let announceCount   = 0;
-let withdrawCount   = 0;
-
-// Sort state for routes table
-let sortCol = 'received_at';
-let sortAsc = false;
-
-// ponytail: pagination state
-let currentPage = 1;
-const pageSize = 50;
-
-// ── Init ───────────────────────────────────────────────────────────────────
-window.addEventListener('DOMContentLoaded', () => {
-  connectSSE();
-  restoreForm();
-
-  document.getElementById('log-wrap').addEventListener('scroll', e => {
-    const el = e.target;
-    autoScroll = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-  });
-
-  // Remove invalid class on input
-  document.querySelectorAll('.sidebar input').forEach(input => {
-    input.addEventListener('input', () => input.classList.remove('invalid'));
-  });
-
-});
-
-// ── Sidebar toggle ─────────────────────────────────────────────────────────
-function toggleSidebar() {
-  sidebarOpen = !sidebarOpen;
-  document.getElementById('sidebar').classList.toggle('collapsed', !sidebarOpen);
-  document.getElementById('sidebar-toggle').textContent = sidebarOpen ? '‹' : '›';
-}
-
-// ── Tab switching ──────────────────────────────────────────────────────────
-function switchTab(name) {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-  document.getElementById('tab-' + name + '-btn').classList.add('active');
-  if (['total', 'unicast', 'flowspec'].includes(name)) {
-    currentView = name;
-    currentPage = 1;
-    document.getElementById('tab-routes').classList.add('active');
-    loadRoutes();
-  } else {
-    document.getElementById('tab-' + name).classList.add('active');
-    if (name === 'analytics') renderAnalytics();
-  }
-  document.getElementById('clear-btn').style.display = name === 'log' ? '' : 'none';
-}
-
-// ── SSE ────────────────────────────────────────────────────────────────────
-function connectSSE() {
-  if (evtSource) evtSource.close();
-  setSseDot('reconnecting');
-  evtSource = new EventSource('/events');
-
-  evtSource.onopen = () => setSseDot('live');
-
-  evtSource.onmessage = e => {
-    try {
-      const event = JSON.parse(e.data);
-
-      if (event.type === 'snapshot') {
-        handleSnapshot(event);
-        return;
-      }
-
-      // Log tab: always append (replayed events fill history)
-      appendLogEntry(event);
-
-      // State updates only from live (non-replayed) events
-      if (!event.replayed) handleLiveEvent(event);
-    } catch (_) {}
-  };
-
-  evtSource.onerror = () => {
-    setSseDot('reconnecting');
-    evtSource.close();
-    setTimeout(connectSSE, 3000);
-  };
-}
-
-function setSseDot(state) {
-  const dot = document.getElementById('sse-dot');
-  dot.className = 'sse-dot ' + state;
-  dot.title = state === 'live' ? 'SSE stream: live' : 'SSE stream: reconnecting…';
-}
-
-// ── Snapshot (initial state on SSE connect) ────────────────────────────────
-function handleSnapshot(event) {
-  const s = event.status || {};
-
-  currentPage = 1;
-  announceCount = 0;
-  withdrawCount = 0;
-  ribStats = event.stats || ribStats;
-
-  // Update session state
-  sessionRunning = s.running || false;
-  if (sessionRunning) {
-    populateForm(s);
-  } else {
-    restoreForm();
-  }
-  capturing = s.capture_running || false;
-  updateCaptureButton();
-  updateStateBadge(s.state || 'IDLE');
-  updatePeerLabel(s);
-  updatePeerInfo(s.peer_info || {});
-  updateFormState();
-  updateRibStats();
-  loadRoutes();
-}
-
-// ── Live event handler ─────────────────────────────────────────────────────
-function handleLiveEvent(event) {
-  if (event.type === 'announce' && event.count) {
-    queueRouteReload(event.routes.find(r => r.route_id)?.route_id);
-  }
-
-  else if (event.type === 'withdraw' && event.count) {
-    queueRouteReload();
-  }
-
-  else if (event.type === 'session') {
-    if (event.state !== undefined) {
-      updateStateBadge(event.state);
-      if (event.state === 'IDLE') {
-        clearRoutes();
-        sessionRunning = false;
-        updateFormState();
-      }
-    }
-    if (event.running !== undefined) {
-      sessionRunning = event.running;
-      updatePeerLabel(event);
-      updateFormState();
-      if (event.running) {
-        populateForm(event);
-      } else {
-        clearRoutes();
-        updatePeerInfo({});
-      }
-    }
-    if (event.peer_info) {
-      updatePeerInfo(event.peer_info);
-    }
-  }
-
-  else if (event.type === 'capture') {
-    if (event.running !== undefined) {
-      capturing = event.running;
-      updateCaptureButton();
-    }
-  }
-}
-
-// ── State badge ────────────────────────────────────────────────────────────
-function updateStateBadge(state) {
-  const badge = document.getElementById('state-badge');
-  const label = document.getElementById('state-label');
-  badge.className = 'state-badge';
-  label.textContent = state || 'IDLE';
-  if (state === 'ESTABLISHED')
-    badge.classList.add('established');
-  else if (['CONNECT','OPEN_SENT','OPEN_CONFIRMED'].includes(state))
-    badge.classList.add('connecting');
-  else if (state === 'ERROR')
-    badge.classList.add('error');
-}
-
-function updatePeerLabel(data) {
-  const el = document.getElementById('peer-label');
-  if (data && data.peer_ip) {
-    el.innerHTML = `<span>${escHtml(String(data.peer_ip))}</span> AS <span>${escHtml(String(data.peer_as || ''))}</span>`;
-  } else if (!sessionRunning) {
-    el.textContent = '';
-  }
-}
-
-function updatePeerInfo(info) {
-  const section = document.getElementById('peer-info-section');
-  const grid    = document.getElementById('peer-info-grid');
-  if (!info || !Object.keys(info).length) {
-    section.style.display = 'none';
-    return;
-  }
-  const labels = { version:'Version', peer_as:'Peer AS', hold_time:'Hold time', router_id:'Router ID' };
-  grid.innerHTML = Object.entries(info).map(([k, v]) =>
-    `<span class="k">${escHtml(labels[k] || k)}</span><span class="v">${escHtml(String(v))}</span>`
-  ).join('');
-  section.style.display = '';
-}
-
-function updateFormState() {
-  setFormDisabled(sessionRunning);
-  document.getElementById('start-btn').disabled = sessionRunning;
-  document.getElementById('stop-btn').disabled  = !sessionRunning;
-
-  const captureBtn = document.getElementById('capture-btn');
-  if (captureBtn) {
-    captureBtn.disabled = !sessionRunning;
-  }
-  if (!sessionRunning && capturing) {
-    capturing = false;
-    updateCaptureButton();
-  }
-}
-
-// ── RIB stats ──────────────────────────────────────────────────────────────
-function updateRibStats() {
-  setStat('s-total', ribStats.total || 0);
-  setStat('s-unicast', ribStats.unicast || 0);
-  setStat('s-flowspec', ribStats.flowspec || 0);
-  document.getElementById('total-count').textContent = ribStats.total || 0;
-  document.getElementById('unicast-count').textContent = ribStats.unicast || 0;
-  document.getElementById('flowspec-count').textContent = ribStats.flowspec || 0;
-  renderAnalytics();
-}
-
-function setStat(id, val) {
-  const el = document.getElementById(id);
-  el.textContent = val;
-  el.className = 'stat-val' + (val > 0 ? ' nonzero' : '');
-}
-
-function renderAnalytics() {
-  const a = ribStats.analytics || {};
-  document.getElementById('a-total').textContent = ribStats.total || 0;
-  document.getElementById('a-unicast').textContent = ribStats.unicast || 0;
-  document.getElementById('a-flowspec').textContent = ribStats.flowspec || 0;
-  document.getElementById('a-afi').innerHTML = `IPv4 ${ribStats.ipv4 || 0}<br>IPv6 ${ribStats.ipv6 || 0}`;
-  document.getElementById('a-events').innerHTML = `Announce ${announceCount}<br>Withdraw ${withdrawCount}`;
-  document.getElementById('a-communities').innerHTML = renderCountBars(a.communities);
-  document.getElementById('a-origin-as').innerHTML = renderCountBars(a.origin_as, 'AS');
-  document.getElementById('a-next-hops').innerHTML = renderCountBars(a.next_hops);
-  document.getElementById('a-prefix-lengths').innerHTML = renderCountBars(a.prefix_lengths);
-  document.getElementById('a-actions').innerHTML = renderCountBars(a.actions);
-  document.getElementById('a-protocols').innerHTML = renderCountBars(a.protocols);
-  document.getElementById('a-ports').innerHTML = renderCountBars(a.ports);
-}
-
-function renderCountBars(rows=[], prefix='') {
-  const max = rows[0]?.[1] || 1;
-  return rows.length
-    ? rows.map(([name, count]) => `
-      <div class="analytics-bar">
-        <span title="${escHtml(prefix + name)}">${escHtml(prefix + name)}</span>
-        <span class="analytics-bar-track"><span class="analytics-bar-fill" style="width:${count / max * 100}%"></span></span>
-        <span class="analytics-bar-count">${count}</span>
-      </div>`).join('')
-    : '—';
-}
-
-// ── Routes table ───────────────────────────────────────────────────────────
-// ponytail: refresh at most once per second during an update burst
-let reloadTimer = null;
-let pendingFlashId = null;
-let routeRequest = 0;
-
-function queueRouteReload(flashId) {
-  if (flashId) pendingFlashId = flashId;
-  if (reloadTimer) return;
-  reloadTimer = setTimeout(() => {
-    reloadTimer = null;
-    loadRoutes(pendingFlashId);
-    pendingFlashId = null;
-  }, 1000);
-}
-
-async function loadRoutes(flashId) {
-  const request = ++routeRequest;
-  const params = new URLSearchParams({
-    family: currentView,
-    page: currentPage,
-    page_size: pageSize,
-    sort: sortCol,
-    order: sortAsc ? 'asc' : 'desc',
-  });
-  try {
-    const response = await fetch('/routes?' + params);
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || response.statusText);
-    if (request !== routeRequest) return;
-    routeRows = data.routes || [];
-    routeTotal = data.count || 0;
-    ribStats = data.stats || ribStats;
-    updateRibStats();
-    renderRoutes(flashId);
-  } catch (e) {
-    document.getElementById('page-info').textContent = 'Route load failed';
-  }
-}
-
-function renderRoutes(flashId) {
-  const tbody  = document.getElementById('routes-tbody');
-  const routes = routeRows;
-  renderRouteHeader();
-
-  if (!routes.length) {
-    tbody.innerHTML = `<tr class="empty"><td colspan="${routeColumnCount()}">No ${currentView === 'total' ? '' : currentView + ' '}routes in RIB</td></tr>`;
-    document.getElementById('page-info').textContent = 'No routes';
-    document.getElementById('btn-prev-page').disabled = true;
-    document.getElementById('btn-next-page').disabled = true;
-    return;
-  }
-
-  const totalRoutes = routeTotal;
-  const totalPages = Math.ceil(totalRoutes / pageSize);
-  if (currentPage > totalPages) currentPage = totalPages || 1;
-  if (currentPage < 1) currentPage = 1;
-
-  const startIdx = (currentPage - 1) * pageSize;
-  const endIdx = Math.min(startIdx + pageSize, totalRoutes);
-  tbody.innerHTML = routes.flatMap(r => [
-    renderRouteRow(r, flashId),
-    `<tr class="route-detail-row" id="detail-${escHtml(r.id)}">
-      <td class="route-detail-cell" colspan="${routeColumnCount()}">
-        <div class="route-detail-inner">${escHtml(JSON.stringify(r, null, 2))}</div>
-      </td>
-    </tr>`,
-  ]).join('');
-
-  // ponytail: update pagination controls state
-  document.getElementById('page-info').textContent = `Showing ${totalRoutes ? startIdx + 1 : 0}-${endIdx} of ${totalRoutes}`;
-  document.getElementById('btn-prev-page').disabled = currentPage <= 1;
-  document.getElementById('btn-next-page').disabled = currentPage >= totalPages;
-}
-
-// ponytail: pagination navigation handlers
-function prevPage() {
-  if (currentPage > 1) {
-    currentPage--;
-    loadRoutes();
-  }
-}
-
-function nextPage() {
-  const totalPages = Math.ceil(routeTotal / pageSize);
-  if (currentPage < totalPages) {
-    currentPage++;
-    loadRoutes();
-  }
-}
-
-function toggleRouteDetail(id) {
-  const row = document.getElementById('detail-' + id);
-  if (row) row.classList.toggle('open');
-}
-
-function sortRoutes(col) {
-  if (sortCol === col) sortAsc = !sortAsc;
-  else { sortCol = col; sortAsc = true; }
-  currentPage = 1;
-  loadRoutes();
-}
-
-function sortableHeader(label, col) {
-  const arrow = sortCol === col ? (sortAsc ? ' ▲' : ' ▼') : '';
-  return `<th onclick="sortRoutes('${col}')">${label}<span class="sort-arrow">${arrow}</span></th>`;
-}
-
-function renderRouteHeader() {
-  let columns;
-  if (currentView === 'unicast') {
-    columns = [
-      sortableHeader('AFI', 'afi'), sortableHeader('Prefix', 'prefix'),
-      '<th>Community</th>', '<th>AS Path</th>',
-      sortableHeader('Next Hop', 'next_hop'), sortableHeader('Peer', 'peer'),
-      sortableHeader('Received', 'received_at'),
-    ];
-  } else if (currentView === 'flowspec') {
-    columns = [
-      sortableHeader('AFI', 'afi'), '<th>Match Criteria</th>',
-      '<th>Actions</th>', sortableHeader('Peer', 'peer'),
-      sortableHeader('Received', 'received_at'),
-    ];
-  } else {
-    columns = [
-      sortableHeader('Type', 'family'), sortableHeader('AFI', 'afi'),
-      '<th>Route</th>', '<th>Policy / Path</th>',
-      sortableHeader('Peer', 'peer'), sortableHeader('Received', 'received_at'),
-    ];
-  }
-  document.getElementById('routes-head').innerHTML = `<tr>${columns.join('')}</tr>`;
-}
-
-function routeColumnCount() {
-  return currentView === 'unicast' ? 7 : currentView === 'flowspec' ? 5 : 6;
-}
-
-function renderRouteRow(r, flashId) {
-  const start = `<tr data-id="${escHtml(r.id)}" class="${r.id === flashId ? 'row-flash' : ''}" onclick="toggleRouteDetail('${escHtml(r.id)}')">`;
-  const end = '</tr>';
-  const received = `<td class="ts-cell" title="${escHtml(formatServerTime(r.received_at))}">${absLocalTime(r.received_at)}</td>`;
-
-  if (currentView === 'unicast') {
-    return start +
-      `<td>${afiBadge(r.afi)}</td>` +
-      `<td>${escHtml(r.prefix || '')}</td>` +
-      `<td>${renderCommunities(r.communities || [])}</td>` +
-      `<td>${escHtml((r.as_path || []).join(' ') || '—')}</td>` +
-      `<td>${escHtml(r.next_hop || '—')}</td>` +
-      `<td class="id-cell">${escHtml(r.peer || '')}</td>` +
-      received + end;
-  }
-  if (currentView === 'flowspec') {
-    return start +
-      `<td>${afiBadge(r.afi)}</td>` +
-      `<td class="match-cell">${renderMatch(r.match)}</td>` +
-      `<td>${renderActions(r.actions || [])}</td>` +
-      `<td class="id-cell">${escHtml(r.peer || '')}</td>` +
-      received + end;
-  }
-  const route = r.family === 'unicast'
-    ? escHtml(r.prefix || '')
-    : renderMatch(r.match);
-  const policy = r.family === 'unicast'
-    ? escHtml((r.as_path || []).join(' ') || '—')
-    : renderActions(r.actions || []);
-  return start +
-    `<td>${escHtml(r.family || '')}</td>` +
-    `<td>${afiBadge(r.afi)}</td>` +
-    `<td class="match-cell">${route}</td>` +
-    `<td>${policy}</td>` +
-    `<td class="id-cell">${escHtml(r.peer || '')}</td>` +
-    received + end;
-}
-
-function afiBadge(afi) {
-  const cls = afi && afi.includes('ipv6') ? 'ipv6' : 'ipv4';
-  const lbl = afi && afi.includes('ipv6') ? 'IPv6' : 'IPv4';
-  return `<span class="afi-badge ${cls}">${lbl}</span>`;
-}
-
-function renderMatch(match) {
-  const items = Object.entries(match || {}).map(([k, v]) => {
-    const val = Array.isArray(v) ? v.join(' ') : v;
-    return `<span class="match-item"><span class="match-key">${escHtml(k)}:</span> <span class="match-val">${escHtml(String(val))}</span></span>`;
-  });
-  if (!items.length) return '<span style="color:var(--text3)">—</span>';
-  const LIMIT = 3;
-  if (items.length <= LIMIT) return `<div class="match-inner" style="max-height: none;">${items.join('')}</div>`;
-  /* ponytail: render all items so they actually exist in DOM when expanded */
-  return `<div class="match-inner">${items.join('')}</div>
-          <span class="match-more" onclick="event.stopPropagation();this.previousElementSibling.classList.toggle('expanded');this.textContent=this.textContent.includes('+')?\`− less\`:\`+${items.length - LIMIT} more\`">+${items.length - LIMIT} more</span>`;
-}
-
-function renderActions(actions) {
-  return actions.map(a => {
-    let cls = 'action-other';
-    if (a === 'discard' || a === 'discard-packets') cls = 'action-discard';
-    else if (a.startsWith('rate-limit'))            cls = 'action-rate-limit';
-    else if (a.startsWith('redirect') || a.startsWith('rt-redirect') || a.startsWith('copy-to')) cls = 'action-redirect';
-    else if (a.startsWith('mark'))                  cls = 'action-mark';
-    else if (a.startsWith('unknown-flowspec'))       cls = 'action-unknown-ec';
-    return `<span class="action-badge ${cls}" title="${escHtml(a)}">${escHtml(formatRateLimit(a))}</span>`;
-  }).join('') || '<span style="color:var(--text3)">—</span>';
-}
-
-function renderCommunities(communities) {
-  return communities.map(c =>
-    `<span class="action-badge action-other">${escHtml(c)}</span>`
-  ).join('') || '<span style="color:var(--text3)">—</span>';
-}
-
-function formatRateLimit(a) {
-  const m = a.match(/^rate-limit=(\d+)(bps|pps)$/);
-  if (!m) return a;
-  const n = parseInt(m[1], 10);
-  if (n >= 1e9) return `rate-limit=${(n/1e9).toFixed(2).replace(/\.?0+$/, '')}G${m[2]}`;
-  if (n >= 1e6) return `rate-limit=${(n/1e6).toFixed(2).replace(/\.?0+$/, '')}M${m[2]}`;
-  if (n >= 1e3) return `rate-limit=${(n/1e3).toFixed(2).replace(/\.?0+$/, '')}K${m[2]}`;
-  return a;
-}
-
-function exportRoutes() {
-  window.location.href = '/routes/export?family=' + encodeURIComponent(currentView);
-}
-
-// ── Longest-prefix match search (`show ip bgp <ip>`) ───────────────────────
-async function searchRoute() {
-  const ip = document.getElementById('search-ip').value.trim();
-  if (!ip) { closeSearchResult(); return; }
-  try {
-    const r = await fetch('/routes/search?ip=' + encodeURIComponent(ip));
-    const data = await r.json();
-    if (!r.ok) { toast(data.error || 'Search failed', 'error'); return; }
-    renderSearchResult(ip, data);
-  } catch (_) {
-    toast('Search failed', 'error');
-  }
-}
-
-function closeSearchResult() {
-  document.getElementById('search-result').style.display = 'none';
-}
-
-function renderSearchResult(ip, data) {
-  const panel = document.getElementById('search-result');
-  const header = `<h4>${data.match ? 'Longest match' : 'No match'} for ${escHtml(ip)}`
-    + `<span class="close-btn" onclick="closeSearchResult()">×</span></h4>`;
-  if (!data.match) {
-    panel.innerHTML = header
-      + `<div style="color:var(--text2);font-size:12px;">No unicast route covers this address.</div>`;
-    panel.style.display = 'block';
-    return;
-  }
-  const r = data.route;
-  const rows = [
-    ['prefix', `${r.prefix} (/${data.length})`],
-    ['next_hop', r.next_hop || '—'],
-    ['as_path', (r.as_path || []).join(' ') || '—'],
-    ['communities', (r.communities || []).join(' ') || '—'],
-    ['peer', r.peer],
-    ['received_at', formatServerTime(r.received_at)],
-  ];
-  panel.innerHTML = header
-    + `<table>${rows.map(([k, v]) => `<tr><td>${escHtml(k)}</td><td>${escHtml(v)}</td></tr>`).join('')}</table>`;
-  panel.style.display = 'block';
-}
-
-// ── Live Log ───────────────────────────────────────────────────────────────
-function setLogFilter(f) {
-  logFilter = f;
-  document.querySelectorAll('.filter-chip').forEach(c =>
-    c.classList.toggle('active', c.dataset.filter === f)
-  );
-  document.querySelectorAll('#log-wrap .log-entry').forEach(el => {
-    el.classList.toggle('hidden', !matchesFilter(el.dataset.type, el.dataset.level));
-  });
-}
-
-function matchesFilter(type, level) {
-  if (logFilter === 'all') return true;
-  if (logFilter === 'error') return type === 'error' || level === 'warning';
-  if (logFilter === 'capture') return type === 'capture';
-  return type === logFilter;
-}
-
-function appendLogEntry(event) {
-  const wrap  = document.getElementById('log-wrap');
-  const empty = document.getElementById('log-empty');
-  if (empty) empty.style.display = 'none';
-  if (event.type === 'announce') announceCount += event.count || 0;
-  if (event.type === 'withdraw') withdrawCount += event.count || 0;
-  document.getElementById('a-events').innerHTML = `Announce ${announceCount}<br>Withdraw ${withdrawCount}`;
-  if ((event.type === 'announce' || event.type === 'withdraw')
-      && !document.getElementById('tab-log').classList.contains('active')) return;
-
-  const entry = document.createElement('div');
-  entry.className = 'log-entry' + (matchesFilter(event.type, event.level) ? '' : ' hidden');
-  entry.dataset.type  = event.type  || '';
-  entry.dataset.level = event.level || '';
-  entry.innerHTML = `
-    <span class="log-ts">${absLocalTime(event.ts)}</span>
-    ${logBadge(event)}
-    <span class="log-msg">${logMsg(event)}</span>`;
-
-  const detailData = {...event};
-  ['ts','message','type','level','replayed'].forEach(k => delete detailData[k]);
-  const detailJson = Object.keys(detailData).length
-    ? JSON.stringify(detailData, null, 2) : '(no extra data)';
-
-  const detail = document.createElement('div');
-  detail.className = 'log-detail';
-  const copyBtn = document.createElement('button');
-  copyBtn.className = 'copy-btn';
-  copyBtn.textContent = '⎘ copy';
-  copyBtn.addEventListener('click', e => { e.stopPropagation(); copyText(copyBtn, detailJson); });
-  const pre = document.createElement('span');
-  pre.textContent = detailJson;
-  detail.appendChild(copyBtn);
-  detail.appendChild(pre);
-
-  entry.addEventListener('click', () => {
-    entry.classList.toggle('expanded');
-  });
-
-  wrap.appendChild(entry);
-  wrap.appendChild(detail);
-
-  // Keep DOM bounded
-  const entries = wrap.querySelectorAll('.log-entry');
-  if (entries.length > 500) {
-    const excess = entries.length - 500;
-    for (let i = 0; i < excess; i++) {
-      const next = entries[i].nextSibling;
-      entries[i].remove();
-      if (next && next.classList.contains('log-detail')) next.remove();
-    }
-  }
-
-  logCount++;
-  document.getElementById('log-count').textContent = logCount;
-  if (autoScroll && !event.replayed) wrap.scrollTop = wrap.scrollHeight;
-}
-
-function logBadge(event) {
-  let cls = 'badge-session', lbl = (event.type || 'unknown').toUpperCase();
-  if (event.type === 'announce')      { cls = 'badge-announce'; lbl = 'ANNOUNCE'; }
-  else if (event.type === 'withdraw') { cls = 'badge-withdraw'; lbl = 'WITHDRAW'; }
-  else if (event.type === 'error')    { cls = 'badge-error';    lbl = 'ERROR'; }
-  else if (event.level === 'warning') { cls = 'badge-warning';  lbl = 'WARN'; }
-  else if (event.type === 'capture')  { cls = 'badge-capture';  lbl = 'PCAP'; }
-  else if (event.level === 'packet')  { cls = 'badge-packet';   lbl = 'PKT'; }
-  return `<span class="log-badge ${cls}">${lbl}</span>`;
-}
-
-function logMsg(event) {
-  let msg = escHtml(event.message || '');
-  if ((event.type === 'announce' || event.type === 'withdraw') && event.routes?.length) {
-    const shown = event.routes.slice(0, 3).map(r => r.family === 'unicast'
-      ? `prefix=${r.prefix || ''}`
-      : Object.entries(r.match || {}).map(([k,v]) => `${k}=${Array.isArray(v) ? v.join(' ') : v}`).join(' '));
-    if (event.routes.length > shown.length) shown.push(`(+${event.routes.length - shown.length} more)`);
-    const actions = event.routes[0].actions;
-    if (actions && actions.length) shown.push('→ ' + actions.join(', '));
-    msg += `  <span style="color:var(--text2)">${escHtml(shown.join('  '))}</span>`;
-  }
-  return msg;
-}
-
-// ── Session control ────────────────────────────────────────────────────────
-async function startSession() {
-  const config = collectConfig();
-  if (!config) return;
-  saveForm(config);
-  setFormDisabled(true);
-  document.getElementById('start-btn').disabled = true;
-
-  try {
-    const r = await fetch('/session/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(config),
-    });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || r.statusText);
-    toast('Session starting…', 'ok');
-    sessionRunning = true;
-    updatePeerLabel({ peer_ip: config.peer_ip, peer_as: config.peer_as });
-    document.getElementById('stop-btn').disabled = false;
-  } catch (e) {
-    toast(String(e), 'error');
-    setFormDisabled(false);
-    document.getElementById('start-btn').disabled = false;
-  }
-}
-
-async function stopSession() {
-  document.getElementById('stop-btn').disabled = true;
-  try {
-    await fetch('/session/stop', { method: 'POST' });
-    toast('Session stopped', 'ok');
-    sessionRunning = false;
-    clearRoutes();
-    updatePeerInfo({});
-    updateFormState();
-  } catch (e) {
-    toast(String(e), 'error');
-    document.getElementById('stop-btn').disabled = false;
-  }
-}
-
-function clearRoutes() {
-  routeRows = [];
-  routeTotal = 0;
-  ribStats = { total:0, unicast:0, flowspec:0, ipv4:0, ipv6:0, analytics:{} };
-  currentPage = 1;
-  renderRoutes();
-  updateRibStats();
-}
-
-function collectConfig() {
-  const fields = {
-    local_as:           document.getElementById('f-local-as').value.trim(),
-    router_id:          document.getElementById('f-router-id').value.trim(),
-    peer_ip:            document.getElementById('f-peer-ip').value.trim(),
-    peer_as:            document.getElementById('f-peer-as').value.trim(),
-    hold_time:          document.getElementById('f-hold-time').value.trim(),
-    reconnect_delay:    document.getElementById('f-reconnect').value.trim(),
-    connect_timeout:    document.getElementById('f-connect-timeout').value.trim(),
-    active_retry_delay: document.getElementById('f-active-retry').value.trim(),
-    json_output:        document.getElementById('f-json-output').value.trim(),
-    listen_port:        document.getElementById('f-listen-port').value.trim(),
-  };
-
-  let ok = true;
-  ['local-as','router-id','peer-ip','peer-as'].forEach(id => {
-    const el = document.getElementById('f-' + id);
-    if (!el.value.trim()) { el.classList.add('invalid'); ok = false; }
-    else el.classList.remove('invalid');
-  });
-  if (!ok) { toast('Please fill in all required fields', 'error'); return null; }
-  return fields;
-}
-
-function setFormDisabled(disabled) {
-  ['f-local-as','f-router-id','f-peer-ip','f-peer-as',
-   'f-hold-time','f-reconnect','f-connect-timeout','f-active-retry',
-   'f-json-output','f-listen-port'].forEach(id => {
-    document.getElementById(id).disabled = disabled;
-  });
-}
-
-// ── localStorage config persistence ───────────────────────────────────────
-function saveForm(config) {
-  try { localStorage.setItem('bgpx-config', JSON.stringify(config)); } catch (_) {}
-}
-
-function restoreForm() {
-  try {
-    const saved = JSON.parse(localStorage.getItem('bgpx-config') || 'null');
-    populateForm(saved);
-  } catch (_) {}
-}
-
-function populateForm(config) {
-  if (!config) return;
-  const map = {
-    'f-local-as': 'local_as', 'f-router-id': 'router_id',
-    'f-peer-ip':  'peer_ip',  'f-peer-as':   'peer_as',
-    'f-hold-time':'hold_time','f-reconnect':  'reconnect_delay',
-    'f-connect-timeout':'connect_timeout','f-active-retry':'active_retry_delay',
-    'f-json-output':'json_output','f-listen-port':'listen_port',
-  };
-  Object.entries(map).forEach(([elId, key]) => {
-    if (config[key] != null) document.getElementById(elId).value = config[key];
-  });
-}
-
-function updateCaptureButton() {
-  const btn = document.getElementById('capture-btn');
-  if (btn) {
-    if (capturing) {
-      btn.textContent = '◉ Stop Capture';
-      btn.classList.add('capturing');
-    } else {
-      btn.textContent = '◉ Capture';
-      btn.classList.remove('capturing');
-    }
-  }
-}
-
-// ── Packet capture ─────────────────────────────────────────────────────────
-let capturing = false;
-
-async function toggleCapture() {
-  if (!sessionRunning) {
-    toast('No active session — start a BGP session first', 'error');
-    return;
-  }
-  const btn = document.getElementById('capture-btn');
-  btn.disabled = true;
-  try {
-    if (!capturing) {
-      const r    = await fetch('/capture/start', { method: 'POST' });
-      const data = await r.json();
-      if (!r.ok) { toast(data.error || 'Capture failed', 'error'); return; }
-      switchTab('log');
-    } else {
-      await fetch('/capture/stop', { method: 'POST' });
-    }
-  } catch (e) {
-    toast(String(e), 'error');
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-async function clearLog() {
-  await fetch('/log', { method: 'DELETE' });
-  document.getElementById('log-wrap').innerHTML =
-    '<div class="log-empty" id="log-empty">Log cleared</div>';
-  logCount = 0;
-  announceCount = 0;
-  withdrawCount = 0;
-  document.getElementById('log-count').textContent = 0;
-  renderAnalytics();
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-function absLocalTime(iso) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '—';
-  return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 19).replace('T', ' ');
-}
-
-function formatServerTime(iso) {
-  return iso ? iso.replace(/T(\d{2}:\d{2}:\d{2})(?:\.\d+)?([+-]\d{2}:\d{2}|Z)/, ' $1 $2').replace(' Z', ' UTC') : '—';
-}
-
-function escHtml(s) {
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function toast(msg, type='ok') {
-  const wrap = document.getElementById('toasts');
-  const el   = document.createElement('div');
-  el.className = `toast ${type}`;
-  el.textContent = msg;
-  wrap.appendChild(el);
-  setTimeout(() => el.remove(), 4000);
-}
-
-function copyText(btn, text) {
-  navigator.clipboard.writeText(text).then(() => {
-    btn.textContent = '✓ copied';
-    setTimeout(() => btn.textContent = '⎘ copy', 1500);
-  });
-}
-</script>
+<script src="/i18n.js"></script>
+<script src="/js/state.js"></script>
+<script src="/js/analytics.js"></script>
+<script src="/js/routes.js"></script>
+<script src="/js/log.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/main.js"></script>
 </body>
 </html>

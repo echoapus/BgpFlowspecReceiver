@@ -112,6 +112,10 @@ if [[ "${SET_BIND_CAP}" -eq 1 ]]; then
   setcap cap_net_bind_service+ep "${STAGED}"
 fi
 mv -fT -- "${STAGED}" "${INSTALL_DIR}/bin/bgpx"
+if [[ -d "${ROOT}/web/locales" ]]; then
+  install -d "${INSTALL_DIR}/locales"
+  install -m 644 "${ROOT}/web/locales/"*.json "${INSTALL_DIR}/locales/"
+fi
 install -m 755 "${ROOT}/uninstall.sh" "${INSTALL_DIR}/uninstall.sh"
 printf '%s\n' 'bgpx-native-v1' >"${INSTALL_DIR}/.bgpx-install"
 if [[ "${EUID}" -eq 0 && "${CREATE_LINK}" -eq 1 ]]; then

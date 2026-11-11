@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -597,13 +597,14 @@ impl Data {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct Page {
     family: Option<String>,
     page: Option<i64>,
     page_size: Option<i64>,
     sort: Option<String>,
     order: Option<String>,
+    filter: Option<String>,
 }
 fn family(query: &Page) -> Result<&str, ApiError> {
     let f = query.family.as_deref().unwrap_or("total");
@@ -613,10 +614,64 @@ fn family(query: &Page) -> Result<&str, ApiError> {
         Err(bad("invalid family"))
     }
 }
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+fn route_matches_filter(r: &Route, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    // `get` avoids panicking when the needle starts with a multi-byte UTF-8 character.
+    let asn_q = match (needle.get(..2), needle.get(2..)) {
+        (Some(p), Some(rest)) if !rest.is_empty() && p.eq_ignore_ascii_case("as") => rest,
+        _ => needle,
+    };
+    if contains_ignore_ascii_case(r.family, needle)
+        || contains_ignore_ascii_case(&r.afi, needle)
+        || contains_ignore_ascii_case(&r.peer, needle)
+        || r.prefix
+            .as_deref()
+            .is_some_and(|p| contains_ignore_ascii_case(p, needle))
+        || r.next_hop
+            .as_deref()
+            .is_some_and(|nh| contains_ignore_ascii_case(nh, needle))
+        || r.communities
+            .iter()
+            .any(|c| contains_ignore_ascii_case(c, needle))
+        || r.as_path.iter().any(|asn| {
+            let s = asn.to_string();
+            s == asn_q || s.contains(needle)
+        })
+        || r.actions
+            .iter()
+            .any(|a| contains_ignore_ascii_case(a, needle))
+    {
+        return true;
+    }
+    if let Some(Value::Object(map)) = r.match_.as_ref() {
+        for (k, v) in map {
+            if contains_ignore_ascii_case(k, needle)
+                || contains_ignore_ascii_case(&v.to_string(), needle)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
 async fn routes(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Json<Value>, ApiError> {
     let family = family(&q)?;
     let page = q.page.unwrap_or(1).max(1) as usize;
     let size = q.page_size.unwrap_or(50).clamp(1, 500) as usize;
+    let filter = q.filter.as_deref().unwrap_or("").trim();
+    // Snapshot shared Arc<Route> references and release the RIB lock before filtering/sorting.
     let (mut rows, stats) = {
         let data = app.data.lock().unwrap();
         let rows: Vec<_> = data
@@ -627,6 +682,9 @@ async fn routes(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Json
             .collect();
         (rows, data.stats())
     };
+    if !filter.is_empty() {
+        rows.retain(|r| route_matches_filter(r, filter));
+    }
     let sort = q
         .sort
         .as_deref()
@@ -668,14 +726,15 @@ async fn routes(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Json
 }
 async fn export(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Response, ApiError> {
     let family = family(&q)?.to_owned();
+    let filter = q.filter.as_deref().unwrap_or("").trim().to_owned();
     let permit = app.exports.clone().try_acquire_owned().map_err(|_| {
         (
             StatusCode::TOO_MANY_REQUESTS,
             Json(json!({"error":"Two exports are already running"})),
         )
     })?;
-    // Snapshot shared references so serialization does not hold the RIB lock across awaits.
-    let rows: Vec<_> = app
+    // Snapshot shared references so filtering and serialization do not hold the RIB lock.
+    let mut rows: Vec<_> = app
         .data
         .lock()
         .unwrap()
@@ -684,6 +743,9 @@ async fn export(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Resp
         .filter(|r| family == "total" || r.family == family)
         .cloned()
         .collect();
+    if !filter.is_empty() {
+        rows.retain(|r| route_matches_filter(r, &filter));
+    }
     Ok((
         [
             ("content-type", "application/json"),
@@ -832,9 +894,161 @@ async fn health(State(app): State<Shared>) -> Response {
     )
         .into_response()
 }
+fn locale_search_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = vec![
+        std::path::PathBuf::from("web/locales"),
+        std::path::PathBuf::from("locales"),
+    ];
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            dirs.push(exe_dir.join("locales"));
+            if let Some(parent) = exe_dir.parent() {
+                dirs.push(parent.join("locales"));
+                dirs.push(parent.join("web/locales"));
+            }
+        }
+    }
+    dirs
+}
+
+fn embedded_locale(code: &str) -> Option<&'static str> {
+    match code {
+        "en" => Some(include_str!("../web/locales/en.json")),
+        "ko" => Some(include_str!("../web/locales/ko.json")),
+        "zh-TW" => Some(include_str!("../web/locales/zh-TW.json")),
+        _ => None,
+    }
+}
+
+fn load_all_locales() -> BTreeMap<String, Value> {
+    let mut locales = BTreeMap::new();
+    for code in ["en", "ko", "zh-TW"] {
+        if let Some(raw) = embedded_locale(code) {
+            if let Ok(val @ Value::Object(_)) = serde_json::from_str::<Value>(raw) {
+                locales.insert(code.to_string(), val);
+            }
+        }
+    }
+
+    for dir in locale_search_dirs() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(code) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if let Ok(raw) = std::fs::read_to_string(&path) {
+                if let Ok(val @ Value::Object(_)) = serde_json::from_str::<Value>(&raw) {
+                    locales.insert(code.to_string(), val);
+                }
+            }
+        }
+    }
+    locales
+}
+
+fn load_single_locale(code: &str) -> Option<Value> {
+    if code.is_empty()
+        || !code
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+    let filename = format!("{code}.json");
+    for dir in locale_search_dirs().into_iter().rev() {
+        let path = dir.join(&filename);
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            if let Ok(val @ Value::Object(_)) = serde_json::from_str::<Value>(&raw) {
+                return Some(val);
+            }
+        }
+    }
+    let raw = embedded_locale(code)?;
+    match serde_json::from_str::<Value>(raw) {
+        Ok(val @ Value::Object(_)) => Some(val),
+        _ => None,
+    }
+}
+
+async fn list_locales() -> Json<Value> {
+    let locales = load_all_locales();
+    let list: Vec<Value> = locales
+        .iter()
+        .map(|(code, dict)| {
+            let name = dict
+                .get("_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(code.as_str());
+            json!({ "code": code, "name": name })
+        })
+        .collect();
+    Json(Value::Array(list))
+}
+
+async fn get_locale(Path(code): Path<String>) -> Result<Json<Value>, ApiError> {
+    match load_single_locale(&code) {
+        Some(dict) => Ok(Json(dict)),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Locale '{code}' not found") })),
+        )),
+    }
+}
+
+async fn get_js(Path(file): Path<String>) -> Response {
+    let content = match file.as_str() {
+        "state.js" => Some(include_str!("../web/js/state.js")),
+        "analytics.js" => Some(include_str!("../web/js/analytics.js")),
+        "routes.js" => Some(include_str!("../web/js/routes.js")),
+        "log.js" => Some(include_str!("../web/js/log.js")),
+        "api.js" => Some(include_str!("../web/js/api.js")),
+        "main.js" => Some(include_str!("../web/js/main.js")),
+        _ => None,
+    };
+    match content {
+        Some(body) => (
+            [("content-type", "application/javascript; charset=utf-8")],
+            body,
+        )
+            .into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Script '{file}' not found") })),
+        )
+            .into_response(),
+    }
+}
+
 pub fn router(app: Shared) -> Router {
     Router::new()
         .route("/", get(|| async { Html(include_str!("../web/ui.html")) }))
+        .route(
+            "/css/style.css",
+            get(|| async {
+                (
+                    [("content-type", "text/css; charset=utf-8")],
+                    include_str!("../web/css/style.css"),
+                )
+            }),
+        )
+        .route(
+            "/i18n.js",
+            get(|| async {
+                (
+                    [("content-type", "application/javascript; charset=utf-8")],
+                    include_str!("../web/i18n.js"),
+                )
+            }),
+        )
+        .route("/js/{file}", get(get_js))
+        .route("/locales", get(list_locales))
+        .route("/locales/{code}", get(get_locale))
         .route("/session/start", post(start))
         .route("/session/stop", post(stop))
         .route("/routes", get(routes))
@@ -1014,13 +1228,7 @@ mod memory_tests {
     async fn export_limit_and_disconnect_release() {
         let app = App::new(None);
         announce(&app, 1);
-        let page = || Page {
-            family: None,
-            page: None,
-            page_size: None,
-            sort: None,
-            order: None,
-        };
+        let page = Page::default;
         let first = export(State(app.clone()), Query(page())).await.unwrap();
         let second = export(State(app.clone()), Query(page())).await.unwrap();
         assert_eq!(

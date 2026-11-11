@@ -31,12 +31,26 @@ def main():
 
         status, page = request("/")
         assert status == 200 and b"routes-tbody" in page
+        status, css = request("/css/style.css")
+        assert status == 200 and b"--bg0" in css
+        for js_name in ("state.js", "analytics.js", "routes.js", "log.js", "api.js", "main.js"):
+            status, _ = request(f"/js/{js_name}")
+            assert status == 200
+        status, i18n_js = request("/i18n.js")
+        assert status == 200 and b"initI18n" in i18n_js
+        status, locales = request("/locales")
+        assert status == 200 and any(item["code"] == "zh-TW" for item in json.loads(locales))
+        status, zh_tw = request("/locales/zh-TW")
+        assert status == 200 and json.loads(zh_tw)["_name"] == "繁體中文"
+        assert request("/locales/nonexistent")[0] == 404
         assert request("/health")[0] == 503
         assert request("/session/start", b"not json")[0] == 400
         assert request("/session/start", b"[]")[0] == 400
         assert request("/capture/start", b"{}")[0] == 400
         assert json.loads(request("/routes")[1])["count"] == 0
+        assert json.loads(request("/routes?filter=192.0.2.0")[1])["count"] == 0
         assert json.loads(request("/routes/export")[1]) == {"routes": []}
+        assert json.loads(request("/routes/export?filter=192.0.2.0")[1]) == {"routes": []}
         events = urllib.request.urlopen(base + "/events", timeout=5)
         assert events.headers["Content-Type"] == "text/event-stream"
 
