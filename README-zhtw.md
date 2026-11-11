@@ -1,6 +1,6 @@
 # bgpx
 
-內建 Live Web UI 的 BGP Unicast 與 FlowSpec receiver — 原生 Rust 版本，版本 26.9.21。
+內建 Live Web UI 的 BGP Unicast 與 FlowSpec receiver — 原生 Rust 版本，版本 26.11.11。
 可連接 peer router，在記憶體中維護 RIB，並透過 Server-Sent Events (SSE) 將所有內容即時串流至瀏覽器。
 
 ```bash
