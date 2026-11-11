@@ -62,6 +62,21 @@ command links belonging to another installation are not overwritten. Reapply
 The port capability is applied to the bgpx executable, not a Python
 interpreter. It must be reapplied when replacing the binary.
 
+### UI Languages (Locales)
+
+The HTML, CSS and JavaScript are compiled into the binary; only translations
+live on disk. `deploy.sh` copies `web/locales/*.json` to `<install-dir>/locales/`
+and records the shipped files in `.bgpx-locales`. On upgrade, shipped files are
+refreshed and ones no longer shipped are removed; files you added yourself are kept.
+
+To add a language, copy `en.json` to `<code>.json` (for example `ja.json`),
+translate the values, and set `"_name"` to the name shown in the language menu.
+Codes may contain only letters, digits, `-` and `_`. Reload the page; no
+restart is required. bgpx searches `./web/locales`, `./locales`,
+`<binary-dir>/locales`, `<binary-dir>/../locales` and `<binary-dir>/../web/locales`,
+with later directories taking precedence. `en`, `ko` and `zh-TW` are also
+embedded in the binary as fallbacks.
+
 ## Upgrading a Python Deployment
 
 Re-run deployment with `--service` to replace the service command with the
@@ -85,7 +100,8 @@ docker run --rm -p 179:179 -p 8080:8080 bgpx
 
 The multi-stage image contains the release executable and tcpdump, with no
 Python runtime. To export routes, mount a writable directory and pass
-`--json-output /data/routes.json`.
+`--json-output /data/routes.json`. Locale files are installed at
+`/usr/local/locales`; mount a directory there to add or override translations.
 
 ## Port 179 and Packet Capture
 

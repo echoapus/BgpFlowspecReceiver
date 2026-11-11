@@ -25,10 +25,20 @@ def main():
         run(ROOT / "deploy.sh", *deploy)
         assert (home / "bin/bgpx").is_file()
         assert (home / ".bgpx-install").read_text().strip() == "bgpx-native-v1"
+        source_locales = sorted(p.name for p in (ROOT / "web/locales").glob("*.json"))
+        assert source_locales and sorted(p.name for p in (home / "locales").glob("*.json")) == source_locales
         data = home / "routes.json"
         data.write_text('{"routes":[]}')
+        # Upgrade drops locales no longer shipped but keeps operator-added ones.
+        (home / "locales/old.json").write_text("{}")
+        with (home / ".bgpx-locales").open("a") as manifest:
+            manifest.write("old.json\n")
+        (home / "locales/custom.json").write_text('{"_name":"Custom"}')
         run(ROOT / "deploy.sh", *deploy)
         assert data.read_text() == '{"routes":[]}'
+        assert not (home / "locales/old.json").exists()
+        assert (home / "locales/custom.json").exists()
+        assert all((home / "locales" / name).is_file() for name in source_locales)
         uninstall = home / "uninstall.sh"
         run(uninstall, ok=False)  # Noninteractive removal requires --force.
         run(uninstall, "--force", "--keep-data")

@@ -96,6 +96,8 @@ docker run --rm -p 179:179 -p 8080:8080 bgpx
 | **⬇ Export** | 將目前的路由表下載為 JSON |
 | **🔍 Search** 搜尋列 | 針對 Unicast RIB 提供類似 `show ip bgp <ip>` 的 LPM (Longest Prefix Match) 搜尋 (`GET /routes/search?ip=`) |
 
+介面內建 English、繁體中文與 한국어。語系檔會從 `locales/` 資料夾自動讀取，可在側邊欄底部的選單切換；新增語系請參考 [INSTALL.md](INSTALL.md#ui-languages-locales)：複製 `en.json` 為 `<code>.json`、翻譯內容並設定 `"_name"`，重新整理頁面即可，不需重啟。
+
 記憶體限制：Event replay 功能最多保留 2,000 個 events 或 8 MiB 的 JSON（以先達到者為準）；超過限制的大型 event 將只支援即時傳送。手動 stop session 會清除伺服器端的 replay history。即時串流會 buffer 64 個 events；如果 Client 落後太多，將會收到一份全新的 snapshot。Export 允許最多兩個 concurrent snapshots，並在 60 秒後過期（額外的 requests 會回傳 HTTP 429）。未使用的 interned 路由屬性及閒置的 index 會在每 30 秒執行一次的 background worker 中回收；session 結束後也會釋放相關記憶體。
 
 上方狀態指示器：

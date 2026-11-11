@@ -113,8 +113,25 @@ if [[ "${SET_BIND_CAP}" -eq 1 ]]; then
 fi
 mv -fT -- "${STAGED}" "${INSTALL_DIR}/bin/bgpx"
 if [[ -d "${ROOT}/web/locales" ]]; then
-  install -d "${INSTALL_DIR}/locales"
-  install -m 644 "${ROOT}/web/locales/"*.json "${INSTALL_DIR}/locales/"
+  # .bgpx-locales lists files shipped by the previous install: remove ones that
+  # are no longer shipped, but never touch locale files the operator added.
+  LOCALE_DIR="${INSTALL_DIR}/locales"
+  LOCALE_MANIFEST="${INSTALL_DIR}/.bgpx-locales"
+  install -d "${LOCALE_DIR}"
+  shopt -s nullglob
+  SHIPPED=()
+  for f in "${ROOT}/web/locales/"*.json; do SHIPPED+=("$(basename -- "${f}")"); done
+  shopt -u nullglob
+  if [[ -f "${LOCALE_MANIFEST}" ]]; then
+    while IFS= read -r old; do
+      [[ "${old}" =~ ^[A-Za-z0-9_-]+\.json$ ]] || continue
+      [[ " ${SHIPPED[*]} " == *" ${old} "* ]] || rm -f -- "${LOCALE_DIR}/${old}"
+    done <"${LOCALE_MANIFEST}"
+  fi
+  if (( ${#SHIPPED[@]} )); then
+    install -m 644 "${SHIPPED[@]/#/${ROOT}/web/locales/}" "${LOCALE_DIR}/"
+  fi
+  printf '%s\n' "${SHIPPED[@]}" >"${LOCALE_MANIFEST}"
 fi
 install -m 755 "${ROOT}/uninstall.sh" "${INSTALL_DIR}/uninstall.sh"
 printf '%s\n' 'bgpx-native-v1' >"${INSTALL_DIR}/.bgpx-install"
