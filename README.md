@@ -236,7 +236,8 @@ cargo test --locked
 
 ## Installation
 
-You can easily install `bgpx` as a systemd service using the included script:
+You can install `bgpx` as a systemd service on Debian/Ubuntu and Red Hat-family
+hosts, or an OpenRC service on Alpine, using the included script:
 
 ```bash
 sudo ./deploy.sh --service --cap-net-bind-service

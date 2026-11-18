@@ -222,7 +222,7 @@ cargo test --locked
 
 ## 安裝 (Installation)
 
-您可以使用內附的 script 輕鬆將 `bgpx` 安裝成 systemd service：
+您可以使用內附的 script 輕鬆將 `bgpx` 安裝成 service：Debian/Ubuntu 與 Red Hat 系列使用 systemd，Alpine 使用 OpenRC：
 
 ```bash
 sudo ./deploy.sh --service --cap-net-bind-service

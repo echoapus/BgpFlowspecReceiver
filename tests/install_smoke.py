@@ -20,7 +20,7 @@ def main():
     binary = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="bgpx-install-") as tmp:
         home = Path(tmp) / "custom install"
-        deploy = ["--binary", binary, "--install-dir", home,
+        deploy = ["--rust", "--binary", binary, "--install-dir", home,
                   "--no-service", "--no-link", "--web-port", "09090"]
         run(ROOT / "deploy.sh", *deploy)
         assert (home / "bin/bgpx").is_file()

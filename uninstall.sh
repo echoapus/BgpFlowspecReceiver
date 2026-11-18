@@ -8,7 +8,10 @@ DEFAULT_DIR=/opt/bgpx
 INSTALL_DIR="${INSTALL_DIR:-${DEFAULT_DIR}}"
 BIN_LINK="/usr/local/bin/${APP_NAME}"
 SERVICE_NAME="${APP_NAME}.service"
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
+SYSTEMD_SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
+OPENRC_SERVICE_FILE="/etc/init.d/${APP_NAME}"
+SERVICE_MANAGER=""
+SERVICE_FILE=""
 FORCE=0
 KEEP_DATA=0
 
@@ -60,23 +63,61 @@ require_safe_install_dir() {
   fi
 }
 
+detect_service_manager() {
+  if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+    SERVICE_MANAGER=systemd
+    SERVICE_FILE="${SYSTEMD_SERVICE_FILE}"
+  elif command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; then
+    SERVICE_MANAGER=openrc
+    SERVICE_FILE="${OPENRC_SERVICE_FILE}"
+  elif command -v systemctl >/dev/null 2>&1; then
+    SERVICE_MANAGER=systemd
+    SERVICE_FILE="${SYSTEMD_SERVICE_FILE}"
+  elif command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; then
+    SERVICE_MANAGER=openrc
+    SERVICE_FILE="${OPENRC_SERVICE_FILE}"
+  else
+    SERVICE_FILE=""
+  fi
+}
+
+service_is_owned() {
+  local file="$1" line
+  [[ -e "${file}" || -L "${file}" ]] || return 1
+  while IFS= read -r line; do
+    if [[ "${line}" == "# bgpx-install-dir: ${INSTALL_DIR}" || "${line}" == "ExecStart=${INSTALL_DIR}/venv/bin/bgpx "* ]]; then
+      return 0
+    fi
+  done <"${file}"
+  return 1
+}
+
 remove_service() {
   if [[ "${OWN_SERVICE}" -ne 1 ]]; then
-    echo "Systemd unit:      not owned by this installation; kept"
+    echo "Service:           not owned by this installation; kept"
     return
   fi
 
-  systemctl stop "${SERVICE_NAME}"
-  systemctl disable "${SERVICE_NAME}"
-
-  rm -f "${SERVICE_FILE}"
-
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl daemon-reload >/dev/null 2>&1 || true
-    systemctl reset-failed "${SERVICE_NAME}" >/dev/null 2>&1 || true
+  if [[ "${OWN_SYSTEMD}" -eq 1 ]]; then
+    if [[ "${SERVICE_MANAGER}" == systemd ]]; then
+      systemctl stop "${SERVICE_NAME}"
+      systemctl disable "${SERVICE_NAME}"
+    fi
+    rm -f "${SYSTEMD_SERVICE_FILE}"
+    if [[ "${SERVICE_MANAGER}" == systemd ]]; then
+      systemctl daemon-reload >/dev/null 2>&1 || true
+      systemctl reset-failed "${SERVICE_NAME}" >/dev/null 2>&1 || true
+    fi
+    echo "Systemd unit:      removed ${SYSTEMD_SERVICE_FILE}"
   fi
-
-  echo "Systemd unit:      removed ${SERVICE_FILE}"
+  if [[ "${OWN_OPENRC}" -eq 1 ]]; then
+    if [[ "${SERVICE_MANAGER}" == openrc ]]; then
+      rc-service "${APP_NAME}" stop
+      rc-update del "${APP_NAME}" default
+    fi
+    rm -f "${OPENRC_SERVICE_FILE}"
+    echo "OpenRC service:    removed ${OPENRC_SERVICE_FILE}"
+  fi
 }
 
 remove_bin_link() {
@@ -129,13 +170,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 require_safe_install_dir
+detect_service_manager
 
-OWN_SERVICE=0
-if [[ -f "${SERVICE_FILE}" ]]; then
-  while IFS= read -r line; do
-    if [[ "${line}" == "# bgpx-install-dir: ${INSTALL_DIR}" || "${line}" == "ExecStart=${INSTALL_DIR}/venv/bin/bgpx "* ]]; then OWN_SERVICE=1; fi
-  done <"${SERVICE_FILE}"
-fi
+OWN_SYSTEMD=0
+OWN_OPENRC=0
+if service_is_owned "${SYSTEMD_SERVICE_FILE}"; then OWN_SYSTEMD=1; fi
+if service_is_owned "${OPENRC_SERVICE_FILE}"; then OWN_OPENRC=1; fi
+OWN_SERVICE=$(( OWN_SYSTEMD || OWN_OPENRC ))
 OWN_LINK=0
 if [[ -L "${BIN_LINK}" ]]; then
   target="$(realpath -m -- "${BIN_LINK}")"
@@ -146,7 +187,11 @@ if [[ "${EUID}" -ne 0 && ( "${OWN_SERVICE}" -eq 1 || "${OWN_LINK}" -eq 1 ) ]]; t
   exit 1
 fi
 if [[ "${OWN_SERVICE}" -eq 1 ]]; then
-  command -v systemctl >/dev/null || { echo "systemctl is required to stop this installation" >&2; exit 1; }
+  if [[ "${OWN_SYSTEMD}" -eq 1 && "${SERVICE_MANAGER}" == systemd ]]; then
+    command -v systemctl >/dev/null || { echo "systemctl is required to stop this installation" >&2; exit 1; }
+  elif [[ "${OWN_OPENRC}" -eq 1 && "${SERVICE_MANAGER}" == openrc ]]; then
+    command -v rc-service >/dev/null && command -v rc-update >/dev/null || { echo "OpenRC is required to stop this installation" >&2; exit 1; }
+  fi
 fi
 
 echo "Uninstall plan"
@@ -154,7 +199,8 @@ echo "=============="
 echo "Application:       ${APP_NAME}"
 echo "Install directory: ${INSTALL_DIR}"
 echo "Command link:      ${BIN_LINK}"
-echo "Systemd unit:      ${SERVICE_FILE}"
+echo "Systemd unit:      ${SYSTEMD_SERVICE_FILE}"
+echo "OpenRC service:    ${OPENRC_SERVICE_FILE}"
 if [[ "${KEEP_DATA}" -eq 1 ]]; then
   echo "Data removal:      skipped by --keep-data"
 else

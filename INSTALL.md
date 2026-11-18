@@ -27,6 +27,15 @@ together. BGP transport remains IPv4; the received routes can be IPv4 or IPv6.
 
 ## Host Deployment
 
+`deploy.sh` supports Debian/Ubuntu and Red Hat-family hosts through systemd,
+and Alpine through OpenRC. Alpine's base image uses BusyBox, so install Bash
+before running the script (the script installs GNU coreutils automatically when
+run as root):
+
+```bash
+apk add bash
+```
+
 ```bash
 sudo ./deploy.sh --service --cap-net-bind-service --web-port 8080
 ```
@@ -45,8 +54,17 @@ sudo ./deploy.sh --binary ./target/release/bgpx \
 
 Available options: `--install-dir`, `--binary`, `--web-port`, `--service`,
 `--no-service`, `--no-link`, and `--cap-net-bind-service`. `INSTALL_DIR` and `WEB_PORT` environment
-variables are also supported. The old `--rust` flag is accepted as a no-op.
-The old `--python` option is no longer applicable.
+variables are also supported. `--rust` refreshes packages and installs the C
+compiler, curl, and CA certificates needed to build from source: it uses `apk`
+on Alpine, `apt-get` on Debian/Ubuntu, and `dnf` or `yum` on Red Hat-family
+hosts. Run it with `sudo` from the non-root user who owns the source checkout;
+it is ignored when `--binary` is supplied. The old `--python` option is no
+longer applicable.
+
+`--service` creates `bgpx.service` with systemd, or `/etc/init.d/bgpx` and an
+OpenRC default runlevel entry on Alpine. `--cap-net-bind-service` requires the
+platform libcap tools (`libcap2-bin` on Debian/Ubuntu; `libcap` on Alpine and
+Red Hat-family distributions).
 
 For a local installation without changing systemd or the global command link:
 
@@ -136,8 +154,11 @@ is present.
 ## Service and Uninstall
 
 ```bash
+# Debian/Ubuntu and Red Hat-family hosts
 sudo systemctl status bgpx
 sudo journalctl -u bgpx -f
+# Alpine instead
+sudo rc-service bgpx status
 sudo /opt/bgpx/uninstall.sh
 ```
 
