@@ -116,20 +116,11 @@ fn flowspec_and_or_routes_remain_distinct() {
     };
     app.apply_update(parsed(14, 0x85), "192.0.2.1");
     app.apply_update(parsed(14, 0xc5), "192.0.2.1");
-    assert_eq!(app.data.lock().unwrap().routes.len(), 2);
+    assert_eq!(app.data.lock().unwrap().route_count(), 2);
     app.apply_update(parsed(15, 0xc5), "192.0.2.1");
     let data = app.data.lock().unwrap();
-    assert_eq!(data.routes.len(), 1);
-    assert_eq!(
-        data.routes
-            .values()
-            .next()
-            .unwrap()
-            .match_
-            .as_ref()
-            .unwrap()["port"],
-        json!([">=80", "OR <=90"])
-    );
+    assert_eq!(data.route_count(), 1);
+    assert_eq!(data.rows()[0]["match"]["port"], json!([">=80", "OR <=90"]));
 }
 
 #[test]

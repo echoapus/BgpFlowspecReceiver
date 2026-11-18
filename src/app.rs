@@ -65,28 +65,183 @@ pub struct App {
 // Value::Object pays for every field name as a fresh heap string per row, and numbers in
 // arrays (e.g. as_path) get boxed to ~24 bytes each instead of a plain 4-byte u32. This still
 // serializes to the same JSON shape the web UI already expects.
-#[derive(Clone, Serialize)]
-pub struct Route {
-    pub id: String,
-    pub family: &'static str,
-    pub afi: Arc<str>,
-    pub peer: Arc<str>,
-    pub received_at: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prefix: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_hop: Option<String>,
-    #[serde(skip_serializing_if = "slice_is_empty")]
-    pub as_path: Arc<[u32]>,
-    #[serde(skip_serializing_if = "slice_is_empty")]
-    pub communities: Arc<[String]>,
-    #[serde(rename = "match", skip_serializing_if = "Option::is_none")]
-    pub match_: Option<Value>,
+// The RIB stores compact `Entry` slots (below); `Route` is a borrowed view built only when a
+// row is serialized.
+#[derive(Serialize)]
+pub struct Flow {
+    #[serde(rename = "match")]
+    pub match_: Value,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<String>,
 }
-fn slice_is_empty<T>(v: &Arc<[T]>) -> bool {
+
+// id is the first 48 bits of a SHA-1 and received_at is epoch microseconds; both are formatted
+// to the same strings as before only when serialized.
+fn ser_id<S: serde::Serializer>(id: &u64, s: S) -> Result<S::Ok, S::Error> {
+    s.collect_str(&format_args!("{id:012x}"))
+}
+fn ser_time<S: serde::Serializer>(us: &i64, s: S) -> Result<S::Ok, S::Error> {
+    let t = chrono::DateTime::from_timestamp_micros(*us).unwrap_or_default();
+    s.collect_str(&t.to_rfc3339_opts(chrono::SecondsFormat::Micros, true))
+}
+
+#[derive(Serialize)]
+pub struct Route<'a> {
+    #[serde(serialize_with = "ser_id")]
+    pub id: u64,
+    pub family: &'static str,
+    pub afi: &'a str,
+    pub peer: &'a str,
+    #[serde(serialize_with = "ser_time")]
+    pub received_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<Prefix>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_hop: Option<&'a str>,
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    pub as_path: &'a [u32],
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    pub communities: &'a [String],
+    #[serde(flatten)]
+    pub flow: Option<&'a Flow>,
+}
+fn slice_is_empty<T>(v: &&[T]) -> bool {
     v.is_empty()
+}
+
+// Everything an UPDATE shares across its prefixes (and that repeats across a full table) lives
+// in one interned, refcounted record, so a slot only carries an 8-byte pointer to it.
+#[derive(PartialEq, Eq, Hash)]
+pub struct Attrs {
+    afi: Box<str>,
+    peer: Box<str>,
+    next_hop: Option<Box<str>>,
+    as_path: Box<[u32]>,
+    communities: Box<[String]>,
+}
+impl Attrs {
+    fn family(&self) -> &'static str {
+        if self.afi.ends_with("-unicast") {
+            "unicast"
+        } else {
+            "flowspec"
+        }
+    }
+}
+
+// Packed unicast prefix (16 address bytes, IPv4 uses the first 4) instead of a heap String.
+#[derive(Clone, Copy)]
+pub struct Prefix {
+    addr: [u8; 16],
+    len: u8,
+    v6: bool,
+}
+impl Prefix {
+    fn parse(s: &str) -> Option<Self> {
+        let (net, len) = s.split_once('/')?;
+        let len: u8 = len.parse().ok()?;
+        let mut addr = [0u8; 16];
+        let v6 = match net.parse::<IpAddr>().ok()? {
+            IpAddr::V4(a) if len <= 32 => {
+                addr[..4].copy_from_slice(&a.octets());
+                false
+            }
+            IpAddr::V6(a) if len <= 128 => {
+                addr = a.octets();
+                true
+            }
+            _ => return None,
+        };
+        Some(Self { addr, len, v6 })
+    }
+    // Longest-prefix match, `show ip bgp <ip>` style: the mask length if `ip` is inside.
+    fn match_len(&self, ip: IpAddr) -> Option<u8> {
+        match (self.v6, ip) {
+            (false, IpAddr::V4(ip)) => {
+                let net = u32::from_be_bytes([self.addr[0], self.addr[1], self.addr[2], self.addr[3]]);
+                let mask = if self.len == 0 { 0 } else { u32::MAX << (32 - self.len) };
+                (net & mask == u32::from(ip) & mask).then_some(self.len)
+            }
+            (true, IpAddr::V6(ip)) => {
+                let mask = if self.len == 0 { 0 } else { u128::MAX << (128 - self.len) };
+                (u128::from_be_bytes(self.addr) & mask == u128::from(ip) & mask).then_some(self.len)
+            }
+            _ => None,
+        }
+    }
+}
+impl std::fmt::Display for Prefix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.v6 {
+            write!(f, "{}/{}", std::net::Ipv6Addr::from(self.addr), self.len)
+        } else {
+            let a = self.addr;
+            write!(f, "{}/{}", std::net::Ipv4Addr::new(a[0], a[1], a[2], a[3]), self.len)
+        }
+    }
+}
+impl Serialize for Prefix {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+#[derive(Clone)]
+pub struct Uni {
+    id: u64,
+    at: i64,
+    attrs: Arc<Attrs>,
+    prefix: Prefix,
+}
+#[derive(Clone)]
+pub struct FlowEntry {
+    id: u64,
+    at: i64,
+    attrs: Arc<Attrs>,
+    flow: Arc<Flow>,
+}
+#[derive(Clone)]
+pub enum Entry {
+    Uni(Uni),
+    Flow(FlowEntry),
+}
+impl Entry {
+    fn id(&self) -> u64 {
+        match self {
+            Entry::Uni(u) => u.id,
+            Entry::Flow(f) => f.id,
+        }
+    }
+    fn attrs(&self) -> &Arc<Attrs> {
+        match self {
+            Entry::Uni(u) => &u.attrs,
+            Entry::Flow(f) => &f.attrs,
+        }
+    }
+    pub fn view(&self) -> Route<'_> {
+        let (id, at, a) = match self {
+            Entry::Uni(u) => (u.id, u.at, &*u.attrs),
+            Entry::Flow(f) => (f.id, f.at, &*f.attrs),
+        };
+        Route {
+            id,
+            family: a.family(),
+            afi: &a.afi,
+            peer: &a.peer,
+            received_at: at,
+            prefix: match self {
+                Entry::Uni(u) => Some(u.prefix),
+                _ => None,
+            },
+            next_hop: a.next_hop.as_deref(),
+            as_path: &a.as_path,
+            communities: &a.communities,
+            flow: match self {
+                Entry::Flow(f) => Some(&*f.flow),
+                _ => None,
+            },
+        }
+    }
 }
 
 // Full tables reuse the same AS_PATH / communities across huge numbers of prefixes (same
@@ -96,42 +251,20 @@ fn slice_is_empty<T>(v: &Arc<[T]>) -> bool {
 // Unused entries are collected by the maintenance worker; session teardown drops the pool.
 #[derive(Default)]
 struct Pool {
-    as_path: HashSet<Arc<[u32]>>,
-    communities: HashSet<Arc<[String]>>,
-    strings: HashSet<Arc<str>>,
+    attrs: HashSet<Arc<Attrs>>,
 }
 impl Pool {
-    fn intern_as_path(&mut self, v: Vec<u32>) -> Arc<[u32]> {
-        if let Some(existing) = self.as_path.get(v.as_slice()) {
+    fn intern(&mut self, a: Attrs) -> Arc<Attrs> {
+        if let Some(existing) = self.attrs.get(&a) {
             return existing.clone();
         }
-        let arc: Arc<[u32]> = Arc::from(v);
-        self.as_path.insert(arc.clone());
-        arc
-    }
-    fn intern_communities(&mut self, v: Vec<String>) -> Arc<[String]> {
-        if let Some(existing) = self.communities.get(v.as_slice()) {
-            return existing.clone();
-        }
-        let arc: Arc<[String]> = Arc::from(v);
-        self.communities.insert(arc.clone());
-        arc
-    }
-    fn intern_str(&mut self, v: &str) -> Arc<str> {
-        if let Some(existing) = self.strings.get(v) {
-            return existing.clone();
-        }
-        let arc: Arc<str> = Arc::from(v);
-        self.strings.insert(arc.clone());
+        let arc = Arc::new(a);
+        self.attrs.insert(arc.clone());
         arc
     }
     fn collect(&mut self) {
-        self.as_path.retain(|v| Arc::strong_count(v) > 1);
-        self.communities.retain(|v| Arc::strong_count(v) > 1);
-        self.strings.retain(|v| Arc::strong_count(v) > 1);
-        self.as_path.shrink_to_fit();
-        self.communities.shrink_to_fit();
-        self.strings.shrink_to_fit();
+        self.attrs.retain(|v| Arc::strong_count(v) > 1);
+        self.attrs.shrink_to_fit();
     }
 }
 
@@ -143,9 +276,13 @@ pub struct Data {
     pub peer_info: Value,
     pub history: VecDeque<Arc<str>>,
     history_bytes: usize,
-    pub routes: BTreeMap<u64, Arc<Route>>,
-    ids: HashMap<String, u64>,
-    sequence: u64,
+    // Append-only slab in insertion order (a re-announce moves a route to the end). Withdrawn
+    // slots become None and are squeezed out by compact(), which bumps `epoch` so chunked
+    // readers (flush) know their cursor is stale. ids maps route id -> slab index.
+    slab: Vec<Option<Entry>>,
+    holes: usize,
+    epoch: u64,
+    ids: HashMap<u64, u32>,
     counts: HashMap<String, usize>,
     analytics: BTreeMap<String, BTreeMap<String, usize>>,
     pool: Pool,
@@ -165,9 +302,10 @@ impl App {
                 peer_info: json!({}),
                 history: VecDeque::new(),
                 history_bytes: 0,
-                routes: BTreeMap::new(),
+                slab: Vec::new(),
+                holes: 0,
+                epoch: 0,
                 ids: HashMap::new(),
-                sequence: 0,
                 counts: HashMap::new(),
                 analytics: [
                     "communities",
@@ -223,6 +361,7 @@ impl App {
 
     pub fn reclaim_memory(&self) {
         let mut data = self.data.lock().unwrap();
+        data.compact();
         data.pool.collect();
         data.ids.shrink_to_fit();
     }
@@ -242,10 +381,11 @@ impl App {
     }
 
     pub fn flush(&self, force: bool) -> std::io::Result<()> {
-        // Snapshot Arc<Route> clones and release the lock before serializing to disk, so a
-        // large RIB write doesn't hold apply_update() out for the whole file write.
+        // Serialize the slab in small chunks, re-taking the lock for each, so a large RIB
+        // write doesn't hold apply_update() out for the whole file write. If compaction runs
+        // mid-write (epoch changes) the cursor is stale: abandon and retry on the next tick.
         let _persistence = self.persistence.lock().unwrap();
-        let (path, routes, revision) = {
+        let (path, epoch, revision) = {
             let data = self.data.lock().unwrap();
             if !force
                 && data
@@ -257,22 +397,38 @@ impl App {
             let Some(path) = data.output.clone() else {
                 return Ok(());
             };
-            (
-                path,
-                data.routes.values().cloned().collect::<Vec<_>>(),
-                data.revision,
-            )
+            (path, data.epoch, data.revision)
         };
         let tmp = format!("{path}.tmp");
         let mut file = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
-        write!(file, "{{\"count\":{},\"routes\":[", routes.len())?;
-        for (i, route) in routes.iter().enumerate() {
-            if i > 0 {
-                file.write_all(b",")?;
+        file.write_all(b"{\"routes\":[")?;
+        let (mut cursor, mut n) = (0usize, 0usize);
+        loop {
+            let mut buf = Vec::new();
+            let done = {
+                let data = self.data.lock().unwrap();
+                if data.epoch != epoch {
+                    drop(file);
+                    let _ = std::fs::remove_file(&tmp);
+                    return Ok(());
+                }
+                let end = (cursor + 4096).min(data.slab.len());
+                for e in data.slab[cursor..end].iter().flatten() {
+                    if n > 0 {
+                        buf.push(b',');
+                    }
+                    serde_json::to_writer(&mut buf, &e.view())?;
+                    n += 1;
+                }
+                cursor = end;
+                end == data.slab.len()
+            };
+            file.write_all(&buf)?;
+            if done {
+                break;
             }
-            serde_json::to_writer(&mut file, route)?;
         }
-        file.write_all(b"]}")?;
+        write!(file, "],\"count\":{n}}}")?;
         file.flush()?;
         file.get_ref().sync_all()?;
         std::fs::rename(tmp, &path)?;
@@ -382,16 +538,6 @@ impl App {
             .filter_map(|v| v.as_str())
             .map(String::from)
             .collect();
-        // Every route in this UPDATE shares the same AS_PATH/communities/peer; intern once
-        // here instead of per route so identical content across updates shares one allocation.
-        let (path, communities, peer_arc) = {
-            let mut data = self.data.lock().unwrap();
-            (
-                data.pool.intern_as_path(path),
-                data.pool.intern_communities(communities),
-                data.pool.intern_str(peer),
-            )
-        };
         // Collect per-kind rows and emit once per BGP UPDATE message instead of once per
         // route: a full-table initial sync can carry hundreds of routes per message, and
         // each emit() pays for a JSON build, a history push and a broadcast send.
@@ -403,9 +549,9 @@ impl App {
                 } else {
                     "flowspec"
                 };
-                // afi is constant for every route in this group; intern once per group
-                // instead of once per route.
-                let afi_arc = self.data.lock().unwrap().pool.intern_str(afi);
+                // Routes in one group share attributes except possibly next_hop; intern one
+                // Attrs per distinct next_hop instead of once per route.
+                let mut cache: HashMap<Option<&str>, Arc<Attrs>> = HashMap::new();
                 for route in routes.as_array().into_iter().flatten() {
                     let identity = if family == "unicast" {
                         json!({"prefix":route["prefix"]})
@@ -414,39 +560,61 @@ impl App {
                     };
                     let canonical =
                         serde_json::to_vec(&json!([family, afi, peer, identity])).unwrap();
-                    let id = format!("{:x}", Sha1::digest(canonical))[..12].to_owned();
-                    let mut entry = Route {
-                        id: id.clone(),
-                        family,
-                        afi: afi_arc.clone(),
-                        peer: peer_arc.clone(),
-                        received_at: now(),
-                        prefix: None,
-                        next_hop: None,
-                        as_path: path.clone(),
-                        communities: communities.clone(),
-                        match_: None,
-                        actions: Vec::new(),
-                    };
-                    if family == "unicast" {
-                        entry.prefix = route["prefix"].as_str().map(String::from);
-                        entry.next_hop = route
+                    let d = Sha1::digest(canonical);
+                    let id = u64::from_be_bytes([0, 0, d[0], d[1], d[2], d[3], d[4], d[5]]);
+                    let next_hop = if family == "unicast" {
+                        route
                             .get("next_hop")
                             .and_then(Value::as_str)
                             .filter(|s| !s.is_empty())
-                            .map(String::from);
                     } else {
-                        entry.match_ = Some(route.clone());
-                        entry.actions = actions.clone();
-                    }
+                        None
+                    };
+                    let attrs_arc = match cache.get(&next_hop) {
+                        Some(a) => a.clone(),
+                        None => {
+                            let a = self.data.lock().unwrap().pool.intern(Attrs {
+                                afi: afi.as_str().into(),
+                                peer: peer.into(),
+                                next_hop: next_hop.map(Into::into),
+                                as_path: path.as_slice().into(),
+                                communities: communities.as_slice().into(),
+                            });
+                            cache.insert(next_hop, a.clone());
+                            a
+                        }
+                    };
+                    let at = Utc::now().timestamp_micros();
+                    let entry = if family == "unicast" {
+                        // shortcut: a malformed prefix drops the route; wire decode always emits valid ones.
+                        let Some(prefix) = route["prefix"].as_str().and_then(Prefix::parse) else {
+                            continue;
+                        };
+                        Entry::Uni(Uni {
+                            id,
+                            at,
+                            attrs: attrs_arc,
+                            prefix,
+                        })
+                    } else {
+                        Entry::Flow(FlowEntry {
+                            id,
+                            at,
+                            attrs: attrs_arc,
+                            flow: Arc::new(Flow {
+                                match_: route.clone(),
+                                actions: actions.clone(),
+                            }),
+                        })
+                    };
+                    let mut row = serde_json::to_value(entry.view()).unwrap();
                     let mut data = self.data.lock().unwrap();
-                    let existed = data.remove(&id);
+                    let existed = data.remove(id);
                     if kind == "announce" {
-                        data.insert(id.clone(), entry.clone());
+                        data.insert(id, entry);
                     }
                     drop(data);
-                    let route_id = (kind == "announce" || existed).then(|| id.clone());
-                    let mut row = serde_json::to_value(&entry).unwrap();
+                    let route_id = (kind == "announce" || existed).then(|| format!("{id:012x}"));
                     row["route_id"] = json!(route_id);
                     batches.entry(kind).or_default().push(row);
                 }
@@ -478,7 +646,7 @@ impl Data {
         self.history_bytes = 0;
     }
 
-    fn metrics(route: &Route) -> Vec<(String, String)> {
+    fn metrics(route: &Route<'_>) -> Vec<(String, String)> {
         let mut out = Vec::new();
         if route.family == "unicast" {
             for c in route.communities.iter() {
@@ -487,17 +655,18 @@ impl Data {
             if let Some(asn) = route.as_path.last() {
                 out.push(("origin_as".into(), asn.to_string()));
             }
-            if let Some(nh) = route.next_hop.as_deref().filter(|s| !s.is_empty()) {
+            if let Some(nh) = route.next_hop {
                 out.push(("next_hops".into(), nh.into()));
             }
-            if let Some((_, len)) = route.prefix.as_deref().and_then(|s| s.split_once('/')) {
-                out.push(("prefix_lengths".into(), format!("/{len}")));
+            if let Some(p) = route.prefix {
+                out.push(("prefix_lengths".into(), format!("/{}", p.len)));
             }
         } else {
-            for a in &route.actions {
+            let flow = route.flow;
+            for a in flow.map(|f| f.actions.as_slice()).unwrap_or_default() {
                 out.push(("actions".into(), a.clone()));
             }
-            let m = route.match_.as_ref();
+            let m = flow.map(|f| &f.match_);
             for (name, key) in [
                 ("protocols", "ip-proto"),
                 ("ports", "port"),
@@ -512,7 +681,7 @@ impl Data {
         }
         out
     }
-    fn count(&mut self, route: &Route, add: bool) {
+    fn count(&mut self, route: &Route<'_>, add: bool) {
         for key in [
             route.family,
             if route.afi.starts_with("ipv6") {
@@ -541,28 +710,60 @@ impl Data {
             }
         }
     }
-    fn insert(&mut self, id: String, route: Route) {
-        self.count(&route, true);
-        self.sequence += 1;
-        self.ids.insert(id, self.sequence);
-        self.routes.insert(self.sequence, Arc::new(route));
+    fn insert(&mut self, id: u64, entry: Entry) {
+        self.count(&entry.view(), true);
+        self.ids.insert(id, self.slab.len() as u32);
+        self.slab.push(Some(entry));
         self.mark_dirty();
     }
-    fn remove(&mut self, id: &str) -> bool {
-        if let Some(seq) = self.ids.remove(id) {
-            let route = self.routes.remove(&seq).unwrap();
-            self.count(&route, false);
+    fn remove(&mut self, id: u64) -> bool {
+        if let Some(i) = self.ids.remove(&id) {
+            let entry = self.slab[i as usize].take().unwrap();
+            self.count(&entry.view(), false);
+            self.holes += 1;
             self.mark_dirty();
             true
         } else {
             false
         }
     }
+    pub fn route_count(&self) -> usize {
+        self.ids.len()
+    }
+    // All routes as JSON rows in insertion order (for tests and tooling).
+    pub fn rows(&self) -> Vec<Value> {
+        self.slab
+            .iter()
+            .flatten()
+            .map(|e| serde_json::to_value(e.view()).unwrap())
+            .collect()
+    }
+    // In-place, order-preserving squeeze of withdrawn slots; skipped until >25% are holes.
+    fn compact(&mut self) {
+        if self.holes * 4 <= self.slab.len() {
+            return;
+        }
+        let mut w = 0;
+        for r in 0..self.slab.len() {
+            if self.slab[r].is_some() {
+                self.slab.swap(w, r);
+                let id = self.slab[w].as_ref().unwrap().id();
+                self.ids.insert(id, w as u32);
+                w += 1;
+            }
+        }
+        self.slab.truncate(w);
+        self.slab.shrink_to_fit();
+        self.holes = 0;
+        self.epoch += 1;
+    }
     pub fn clear(&mut self) {
-        if !self.routes.is_empty() {
+        if !self.ids.is_empty() {
             self.mark_dirty();
         }
-        self.routes.clear();
+        self.slab = Vec::new();
+        self.holes = 0;
+        self.epoch += 1;
         self.ids = HashMap::new();
         self.counts = HashMap::new();
         self.pool = Pool::default();
@@ -581,7 +782,7 @@ impl Data {
                 (name, rows)
             })
             .collect();
-        json!({"total":self.routes.len(),"unicast":self.counts.get("unicast").unwrap_or(&0),"flowspec":self.counts.get("flowspec").unwrap_or(&0),"ipv4":self.counts.get("ipv4").unwrap_or(&0),"ipv6":self.counts.get("ipv6").unwrap_or(&0),"analytics":analytics})
+        json!({"total":self.ids.len(),"unicast":self.counts.get("unicast").unwrap_or(&0),"flowspec":self.counts.get("flowspec").unwrap_or(&0),"ipv4":self.counts.get("ipv4").unwrap_or(&0),"ipv6":self.counts.get("ipv6").unwrap_or(&0),"analytics":analytics})
     }
     fn snapshot(&self) -> Value {
         let mut status = self
@@ -624,7 +825,7 @@ fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
         .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
-fn route_matches_filter(r: &Route, needle: &str) -> bool {
+fn route_matches_filter(r: &Route<'_>, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
     }
@@ -637,10 +838,8 @@ fn route_matches_filter(r: &Route, needle: &str) -> bool {
         || contains_ignore_ascii_case(&r.afi, needle)
         || contains_ignore_ascii_case(&r.peer, needle)
         || r.prefix
-            .as_deref()
-            .is_some_and(|p| contains_ignore_ascii_case(p, needle))
+            .is_some_and(|p| contains_ignore_ascii_case(&p.to_string(), needle))
         || r.next_hop
-            .as_deref()
             .is_some_and(|nh| contains_ignore_ascii_case(nh, needle))
         || r.communities
             .iter()
@@ -649,13 +848,15 @@ fn route_matches_filter(r: &Route, needle: &str) -> bool {
             let s = asn.to_string();
             s == asn_q || s.contains(needle)
         })
-        || r.actions
-            .iter()
-            .any(|a| contains_ignore_ascii_case(a, needle))
+        || r.flow.is_some_and(|f| {
+            f.actions
+                .iter()
+                .any(|a| contains_ignore_ascii_case(a, needle))
+        })
     {
         return true;
     }
-    if let Some(Value::Object(map)) = r.match_.as_ref() {
+    if let Some(Value::Object(map)) = r.flow.map(|f| &f.match_) {
         for (k, v) in map {
             if contains_ignore_ascii_case(k, needle)
                 || contains_ignore_ascii_case(&v.to_string(), needle)
@@ -671,19 +872,17 @@ async fn routes(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Json
     let page = q.page.unwrap_or(1).max(1) as usize;
     let size = q.page_size.unwrap_or(50).clamp(1, 500) as usize;
     let filter = q.filter.as_deref().unwrap_or("").trim();
-    // Snapshot shared Arc<Route> references and release the RIB lock before filtering/sorting.
-    let (mut rows, stats) = {
-        let data = app.data.lock().unwrap();
-        let rows: Vec<_> = data
-            .routes
-            .values()
-            .filter(|r| family == "total" || r.family == family)
-            .cloned()
-            .collect();
-        (rows, data.stats())
-    };
+    // Rows are borrowed from the slab, so filtering/sorting/paging holds the RIB lock (it only
+    // builds a Vec of references; there is no per-row copy of the table).
+    let data = app.data.lock().unwrap();
+    let mut rows: Vec<&Entry> = data
+        .slab
+        .iter()
+        .flatten()
+        .filter(|e| family == "total" || e.attrs().family() == family)
+        .collect();
     if !filter.is_empty() {
-        rows.retain(|r| route_matches_filter(r, filter));
+        rows.retain(|e| route_matches_filter(&e.view(), filter));
     }
     let sort = q
         .sort
@@ -702,17 +901,17 @@ async fn routes(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Json
         })
         .unwrap_or("received_at");
     if sort != "received_at" {
-        rows.sort_by_cached_key(|r| {
+        rows.sort_by_cached_key(|e| {
+            let r = e.view();
             match sort {
-                "id" => r.id.as_str(),
-                "family" => r.family,
-                "afi" => r.afi.as_ref(),
-                "prefix" => r.prefix.as_deref().unwrap_or(""),
-                "next_hop" => r.next_hop.as_deref().unwrap_or(""),
-                "peer" => r.peer.as_ref(),
-                _ => "",
+                "id" => format!("{:012x}", r.id),
+                "family" => r.family.to_lowercase(),
+                "afi" => r.afi.to_lowercase(),
+                "prefix" => r.prefix.map(|p| p.to_string()).unwrap_or_default().to_lowercase(),
+                "next_hop" => r.next_hop.unwrap_or("").to_lowercase(),
+                "peer" => r.peer.to_lowercase(),
+                _ => String::new(),
             }
-            .to_lowercase()
         });
     }
     if q.order.as_deref() != Some("asc") {
@@ -720,8 +919,14 @@ async fn routes(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Json
     }
     let count = rows.len();
     let start = page.saturating_sub(1).saturating_mul(size);
+    let page_rows: Vec<Value> = rows
+        .into_iter()
+        .skip(start)
+        .take(size)
+        .map(|e| serde_json::to_value(e.view()).unwrap())
+        .collect();
     Ok(Json(
-        json!({"page":page,"page_size":size,"count":count,"routes":rows.into_iter().skip(start).take(size).collect::<Vec<_>>(),"stats":stats}),
+        json!({"page":page,"page_size":size,"count":count,"routes":page_rows,"stats":data.stats()}),
     ))
 }
 async fn export(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Response, ApiError> {
@@ -733,19 +938,21 @@ async fn export(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Resp
             Json(json!({"error":"Two exports are already running"})),
         )
     })?;
-    // Snapshot shared references so filtering and serialization do not hold the RIB lock.
-    let mut rows: Vec<_> = app
+    // Copy only the matching slots (refcount bumps, no deep copy) so serialization does not
+    // hold the RIB lock.
+    let rows: Vec<Entry> = app
         .data
         .lock()
         .unwrap()
-        .routes
-        .values()
-        .filter(|r| family == "total" || r.family == family)
+        .slab
+        .iter()
+        .flatten()
+        .filter(|e| {
+            (family == "total" || e.attrs().family() == family)
+                && (filter.is_empty() || route_matches_filter(&e.view(), &filter))
+        })
         .cloned()
         .collect();
-    if !filter.is_empty() {
-        rows.retain(|r| route_matches_filter(r, &filter));
-    }
     Ok((
         [
             ("content-type", "application/json"),
@@ -762,7 +969,7 @@ async fn export(State(app): State<Shared>, Query(q): Query<Page>) -> Result<Resp
 // The producer owns the snapshot so its deadline releases routes even if the
 // HTTP client stops polling the body entirely. One queued row bounds backpressure.
 fn export_body(
-    rows: Vec<Arc<Route>>,
+    rows: Vec<Entry>,
     permit: OwnedSemaphorePermit,
     duration: Duration,
 ) -> axum::body::Body {
@@ -775,7 +982,7 @@ fn export_body(
                 .await
                 .ok()?;
             for (i, row) in rows.into_iter().enumerate() {
-                let json = serde_json::to_string(&row).unwrap();
+                let json = serde_json::to_string(&row.view()).unwrap();
                 tx.send(Ok(format!("{}{json}", if i == 0 { "" } else { "," })))
                     .await
                     .ok()?;
@@ -793,28 +1000,6 @@ fn export_body(
     })
 }
 
-// Longest-prefix match, `show ip bgp <ip>` style: the mask length this unicast
-// prefix shares with `ip`, or None if `ip` isn't inside it.
-fn prefix_match_len(prefix: &str, ip: IpAddr) -> Option<u8> {
-    let (net, len) = prefix.split_once('/')?;
-    let len: u8 = len.parse().ok()?;
-    match (net.parse::<IpAddr>().ok()?, ip) {
-        (IpAddr::V4(net), IpAddr::V4(ip)) if len <= 32 => {
-            let mask = if len == 0 { 0 } else { u32::MAX << (32 - len) };
-            (u32::from(net) & mask == u32::from(ip) & mask).then_some(len)
-        }
-        (IpAddr::V6(net), IpAddr::V6(ip)) if len <= 128 => {
-            let mask = if len == 0 {
-                0
-            } else {
-                u128::MAX << (128 - len)
-            };
-            (u128::from(net) & mask == u128::from(ip) & mask).then_some(len)
-        }
-        _ => None,
-    }
-}
-
 #[derive(Deserialize)]
 struct SearchQuery {
     ip: String,
@@ -824,16 +1009,19 @@ async fn search(
     Query(q): Query<SearchQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let ip: IpAddr = q.ip.trim().parse().map_err(|_| bad("invalid ip"))?;
-    // Snapshot Arc<Route> clones and release the lock before scanning, same as export():
-    // a full-table scan shouldn't hold apply_update() out for its whole duration.
-    let routes: Vec<Arc<Route>> = app.data.lock().unwrap().routes.values().cloned().collect();
-    let best = routes
+    // Integer-only scan over the slab; short enough to do under the lock.
+    let data = app.data.lock().unwrap();
+    let best = data
+        .slab
         .iter()
-        .filter(|r| r.family == "unicast")
-        .filter_map(|r| Some((prefix_match_len(r.prefix.as_deref()?, ip)?, r)))
+        .flatten()
+        .filter_map(|e| match e {
+            Entry::Uni(u) => Some((u.prefix.match_len(ip)?, e)),
+            _ => None,
+        })
         .max_by_key(|(len, _)| *len);
     Ok(Json(match best {
-        Some((len, route)) => json!({"match":true,"length":len,"route":route}),
+        Some((len, e)) => json!({"match":true,"length":len,"route":e.view()}),
         None => json!({"match":false}),
     }))
 }
@@ -1114,28 +1302,28 @@ mod memory_tests {
             .data
             .lock()
             .unwrap()
-            .routes
-            .values()
+            .slab
+            .iter()
+            .flatten()
             .next()
             .unwrap()
             .clone();
-        let old_path = Arc::downgrade(&old.as_path);
-        let old_communities = Arc::downgrade(&old.communities);
+        let old_attrs = Arc::downgrade(old.attrs());
         for asn in 2..1000 {
             announce(&app, asn);
         }
         app.reclaim_memory();
         // An export snapshot still needs the old attributes.
-        assert!(old_path.upgrade().is_some());
+        assert!(old_attrs.upgrade().is_some());
         drop(old);
         app.reclaim_memory();
-        assert!(old_path.upgrade().is_none());
-        assert!(old_communities.upgrade().is_none());
+        assert!(old_attrs.upgrade().is_none());
         {
             let data = app.data.lock().unwrap();
-            assert_eq!(data.routes.len(), 1);
-            assert_eq!(data.pool.as_path.len(), 1);
-            assert_eq!(data.pool.communities.len(), 1);
+            assert_eq!(data.ids.len(), 1);
+            assert_eq!(data.pool.attrs.len(), 1);
+            // 999 re-announces of one prefix leave holes that compaction squeezed out.
+            assert_eq!(data.slab.len(), 1);
         }
         app.apply_update(
             json!({"withdraw":{"ipv4-unicast":[{"prefix":"192.0.2.0/24"}]}}),
@@ -1144,18 +1332,16 @@ mod memory_tests {
         app.reclaim_memory();
         {
             let data = app.data.lock().unwrap();
-            assert!(data.pool.as_path.is_empty());
-            assert!(data.pool.communities.is_empty());
+            assert!(data.pool.attrs.is_empty());
         }
         announce(&app, 1000);
         let mut data = app.data.lock().unwrap();
         assert!(data.ids.capacity() > 0);
-        assert!(data.pool.as_path.capacity() > 0);
+        assert!(data.pool.attrs.capacity() > 0);
         data.clear();
         assert_eq!(data.ids.capacity(), 0);
-        assert_eq!(data.pool.as_path.capacity(), 0);
-        assert_eq!(data.pool.communities.capacity(), 0);
-        assert_eq!(data.pool.strings.capacity(), 0);
+        assert_eq!(data.pool.attrs.capacity(), 0);
+        assert_eq!(data.slab.capacity(), 0);
     }
 
     #[tokio::test]
@@ -1209,8 +1395,16 @@ mod memory_tests {
     async fn stalled_export_releases_snapshot_and_permit_without_body_polling() {
         let app = App::new(None);
         announce(&app, 1);
-        let rows: Vec<_> = app.data.lock().unwrap().routes.values().cloned().collect();
-        let old = Arc::downgrade(&rows[0]);
+        let rows: Vec<Entry> = app
+            .data
+            .lock()
+            .unwrap()
+            .slab
+            .iter()
+            .flatten()
+            .cloned()
+            .collect();
+        let old = Arc::downgrade(rows[0].attrs());
         let permit = app.exports.clone().try_acquire_owned().unwrap();
         let body = export_body(rows, permit, Duration::from_millis(10));
         app.data.lock().unwrap().clear();
