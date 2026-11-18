@@ -189,7 +189,8 @@ if [[ -z "${BINARY}" ]]; then
   elif [[ "${RUST_BOOTSTRAP}" -eq 1 ]]; then
     prepare_rust_build_user
   fi
-  if [[ "${RUST_BOOTSTRAP}" -eq 1 ]]; then
+  # Cargo needs a C linker (and libgcc on Alpine); install them when missing.
+  if [[ "${RUST_BOOTSTRAP}" -eq 1 ]] || { [[ "${EUID}" -eq 0 ]] && ! command -v cc >/dev/null; }; then
     install_rust_build_packages
   fi
   BUILD_CARGO="$(find_cargo)"
