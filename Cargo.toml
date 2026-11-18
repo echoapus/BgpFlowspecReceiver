@@ -1,6 +1,6 @@
 [package]
 name = "bgpx"
-version = "26.11.11"
+version = "26.11.18"
 edition = "2021"
 license-file = "LICENSE"
 description = "BGP Unicast and FlowSpec receiver with an embedded web UI"
