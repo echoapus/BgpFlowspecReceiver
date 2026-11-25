@@ -4,6 +4,8 @@ The default application is now the standalone Rust `bgpx` binary. It embeds
 the web UI and needs neither Python nor PyO3. The legacy backend has been
 removed; its parser outputs are retained as fixed regression fixtures.
 
+[English overview](README.md) · [繁體中文說明](README-zhtw.md)
+
 ## Build and Run
 
 Install a current stable Rust toolchain and a C compiler (`gcc` or `clang`,
@@ -14,7 +16,10 @@ cargo build --locked --release
 ./target/release/bgpx --host 127.0.0.1 --port 8080
 ```
 
-Open http://127.0.0.1:8080. Configure the BGP peer in the sidebar, or start
+Open http://127.0.0.1:8080/ on a trusted private LAN. No login is required.
+The WebUI has Total, Unicast, FlowSpec and Live Log tabs; the Analytics tab
+has been removed, while route counts and clickable route filters remain.
+Configure the BGP peer in the sidebar, or start
 with CLI options:
 
 ```bash
@@ -43,6 +48,8 @@ sudo ./deploy.sh --service --cap-net-bind-service --web-port 8080
 The script builds the release binary, installs it at `/opt/bgpx/bin/bgpx`,
 links `/usr/local/bin/bgpx`, and optionally creates and starts
 `bgpx.service`. Cargo must be accessible to the user running the script.
+At completion it prints reverse-proxy checks and Nginx/Caddy examples using
+the selected WebUI port. It does not install, configure or reload a proxy.
 
 To build as your own user and deploy without Cargo under sudo:
 
@@ -100,7 +107,11 @@ embedded in the binary as fallbacks.
 Re-run deployment with `--service` to replace the service command with the
 native binary. Existing legacy `app/` and `venv/` directories are left in
 place, but are no longer used by the service. Existing browser settings,
-HTTP endpoints and route JSON fields are retained.
+endpoint URLs remain, but API requests now require the WebUI headers described
+below, including `/health`. Stored routes and exports contain decoded fields;
+raw `path_attributes` are carried on announce/withdraw events rather than
+stored on each route. The removed Analytics tab does not remove backend
+aggregate-statistics computation.
 
 The native API validates configuration before starting a session. Invalid
 ASNs, IP addresses, ports, hold times and retry delays are rejected.
@@ -137,19 +148,89 @@ sudo apt-get install tcpdump
 Container packet capture may also need `--cap-add=NET_RAW --cap-add=NET_ADMIN`.
 Capture events and errors appear in the existing Live Log.
 
+## Reverse Proxy Examples
+
+`deploy.sh` prints these examples using the selected WebUI port. The examples
+below use port 8080 and plain HTTP on a private LAN. Point `bgpx.lan` to the
+proxy's LAN IP using your DNS or hosts file, then open `http://bgpx.lan/`.
+Use one proxy. These examples assume bgpx and the proxy run on the same host;
+otherwise replace `127.0.0.1` with the bgpx host IP.
+
+Serve the WebUI at `/`, not a subpath such as `/bgpx/`. Preserve the browser's
+Host header including its port, and its original Referer. Do not synthesize
+Referer or Sec-Fetch-Site headers: that bypasses the WebUI request check.
+
+### Nginx
+
+Add this server block inside the Nginx `http` block (often through
+`/etc/nginx/conf.d/bgpx.conf`):
+
+```nginx
+server {
+    listen 80;
+    server_name bgpx.lan;
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header Referer $http_referer;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+    }
+}
+```
+
+Validate before reloading: `sudo nginx -t`. Using `$http_host` preserves the
+browser's port; disabling buffering keeps live events streaming. See the
+[Nginx proxy documentation](https://nginx.org/en/docs/http/ngx_http_proxy_module.html).
+
+### Caddy
+
+Add this site block to your Caddyfile (usually `/etc/caddy/Caddyfile`):
+
+```caddyfile
+http://bgpx.lan {
+    # Host (including port) and Referer are preserved; SSE flushes immediately.
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Validate before reloading:
+`sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`.
+Caddy preserves these headers for this HTTP upstream and streams SSE responses
+immediately without extra buffering settings. See the
+[Caddy reverse proxy documentation](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
+The explicit `http://` keeps this LAN example on HTTP; use your normal TLS site
+configuration if HTTPS is needed. HTTPS termination at the proxy is supported
+when the original Host and Referer are preserved.
+
+If the UI loads but data or controls return HTTP 403, check Host and Referer
+forwarding. If live events arrive late, check buffering and proxy timeouts.
+The header check remains spoofable and is not authentication. If a browser or
+privacy extension strips Referer, UI API requests will also return 403. When
+present, Sec-Fetch-Site must be same-origin; it may be absent on plain HTTP LANs.
+Static files and locale dictionaries do not require these API headers.
+
 ## Verification
 
 ```bash
 ./test.sh
 ./target/release/bgpx --version
-curl -i http://127.0.0.1:8080/health
+# Open http://127.0.0.1:8080/ in your browser
 ```
 
-The health endpoint returns 200 only for an established BGP session and
-503 otherwise. `test.sh` runs Rust formatting, Clippy and tests, shell syntax
-checks and 324 parser compatibility fixtures. It also checks JavaScript syntax
-when Node is present and runs the standalone HTTP/SSE smoke test when Python 3
-is present.
+API endpoints require a WebUI-root Referer matching the request Host. Direct
+requests (including `/health` probes) return 403. This spoofable header check
+is a convenience restriction for trusted private LANs, not authentication.
+Proxies must preserve Host and Referer. With accepted headers, `/health` returns
+200 for an established BGP session and 503 otherwise.
+
+`test.sh` runs Rust formatting, Clippy and tests, shell syntax checks and 324
+parser compatibility fixtures. It also checks JavaScript syntax
+when Node is present and runs both HTTP/SSE and installation smoke tests when
+Python 3 is present. The request-check tests cover denied direct requests,
+accepted WebUI requests, wrong-host referrers and cross-site metadata.
 
 ## Service and Uninstall
 

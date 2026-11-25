@@ -388,7 +388,7 @@ function createActionBadgeEls(actions) {
     else if (a.startsWith('unknown-flowspec'))       cls = 'action-unknown-ec';
     return createEl('span', {
       className: `action-badge clickable-badge ${cls}`,
-      title: t('analytics.click_to_filter', { value: a }),
+      title: t('routes.click_to_filter', { value: a }),
       textContent: formatRateLimit(a),
       onclick: e => {
         e.stopPropagation();
@@ -403,7 +403,7 @@ function createCommunityBadgeEls(communities) {
   return communities.map(c =>
     createEl('span', {
       className: 'action-badge clickable-badge action-other',
-      title: t('analytics.click_to_filter', { value: c }),
+      title: t('routes.click_to_filter', { value: c }),
       textContent: c,
       onclick: e => {
         e.stopPropagation();

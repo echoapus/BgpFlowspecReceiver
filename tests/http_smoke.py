@@ -19,9 +19,10 @@ def main():
         assert line.startswith("Web UI: "), line
         base = line.removeprefix("Web UI: ").strip()
 
-        def request(path, data=None, method=None):
+        def request(path, data=None, method=None, webui=True):
             req = urllib.request.Request(base + path, data=data, method=method,
-                                         headers={"Content-Type": "application/json"})
+                                         headers={"Content-Type": "application/json",
+                                                  **({"Referer": base + "/"} if webui else {})})
             try:
                 response = urllib.request.urlopen(req, timeout=5)
             except urllib.error.HTTPError as error:
@@ -29,13 +30,18 @@ def main():
             with response:
                 return response.status, response.read()
 
-        status, page = request("/")
+        for path in ("/routes", "/routes/search?ip=192.0.2.1", "/routes/export", "/events", "/health"):
+            assert request(path, webui=False)[0] == 403
+        assert request("/session/stop", b"{}", webui=False)[0] == 403
+        status, page = request("/", webui=False)
         assert status == 200 and b"routes-tbody" in page
+        assert b"tab-analytics" not in page and b"analytics.js" not in page
         status, css = request("/css/style.css")
         assert status == 200 and b"--bg0" in css
-        for js_name in ("state.js", "analytics.js", "routes.js", "log.js", "api.js", "main.js"):
+        for js_name in ("state.js", "routes.js", "log.js", "api.js", "main.js"):
             status, _ = request(f"/js/{js_name}")
             assert status == 200
+        assert request("/js/analytics.js")[0] == 404
         status, i18n_js = request("/i18n.js")
         assert status == 200 and b"initI18n" in i18n_js
         status, locales = request("/locales")
@@ -51,7 +57,8 @@ def main():
         assert json.loads(request("/routes?filter=192.0.2.0")[1])["count"] == 0
         assert json.loads(request("/routes/export")[1]) == {"routes": []}
         assert json.loads(request("/routes/export?filter=192.0.2.0")[1]) == {"routes": []}
-        events = urllib.request.urlopen(base + "/events", timeout=5)
+        events = urllib.request.urlopen(
+            urllib.request.Request(base + "/events", headers={"Referer": base + "/"}), timeout=5)
         assert events.headers["Content-Type"] == "text/event-stream"
 
         def event():

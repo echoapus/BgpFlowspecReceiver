@@ -22,7 +22,11 @@ def main():
         home = Path(tmp) / "custom install"
         deploy = ["--rust", "--binary", binary, "--install-dir", home,
                   "--no-service", "--no-link", "--web-port", "09090"]
-        run(ROOT / "deploy.sh", *deploy)
+        installed = run(ROOT / "deploy.sh", *deploy)
+        assert "proxy_pass http://127.0.0.1:9090;" in installed.stdout
+        assert "proxy_set_header Host $http_host;" in installed.stdout
+        assert "proxy_set_header Referer $http_referer;" in installed.stdout
+        assert "reverse_proxy 127.0.0.1:9090" in installed.stdout
         assert (home / "bin/bgpx").is_file()
         assert (home / ".bgpx-install").read_text().strip() == "bgpx-native-v1"
         source_locales = sorted(p.name for p in (ROOT / "web/locales").glob("*.json"))

@@ -1,5 +1,7 @@
 # bgpx
 
+[English](README.md) · [安裝指南](INSTALL.md)
+
 內建 Live Web UI 的 BGP Unicast 與 FlowSpec receiver — 原生 Rust 版本，版本 26.11.18。
 可連接 peer router，在記憶體中維護 RIB，並透過 Server-Sent Events (SSE) 將所有內容即時串流至瀏覽器。
 
@@ -25,11 +27,14 @@ bgpx --local-as 65001 --router-id 192.0.2.2 --peer-ip 192.0.2.1 --peer-as 65000
 - **4-byte ASN** — `AS_TRANS`, `CAP_4BYTE_ASN`, `AS4_PATH` (RFC 6793)。
 - **Hold-timer 強制執行** — timeout 時會重設 session。
 - **JSON RIB persistence** — 透過 periodic atomic write 將路由表儲存至檔案中 (`--json-output`)。
-- **Web UI** — 支援排序的路由表、帶有 filter chips 的 live log、Analytics、packet capture 檢視器，以及針對 Unicast RIB 的 `show ip bgp <ip>` LPM (Longest Prefix Match) 搜尋。
+- **Web UI** — 支援排序的路由表、帶有 filter chips 的 live log、packet capture 檢視器，以及針對 Unicast RIB 的 `show ip bgp <ip>` LPM (Longest Prefix Match) 搜尋。
 
 ---
 
 ## 快速開始 (Quick start)
+
+本程式適用於可信任的私人 LAN，不需要登入。未帶有 WebUI 請求 headers 的
+直接 API 請求會回傳 HTTP 403。
 
 ```bash
 # 僅啟動 Web UI — 可直接在瀏覽器中設定 BGP session
@@ -84,13 +89,14 @@ docker run --rm -p 179:179 -p 8080:8080 bgpx
 
 ## 網頁介面 (Web UI)
 
-打開 `http://localhost:8080`。Session 的設定會被存放在瀏覽器的 `localStorage` 中。
+打開 `http://localhost:8080/`。Session 的設定會被存放在瀏覽器的 `localStorage` 中。
+目前提供 Total、Unicast、FlowSpec 與 Live Log 分頁。Analytics 分頁已移除；
+側邊欄及路由分頁仍會顯示路由數量。
 
 | 面板 | 顯示內容 |
 |---|---|
 | Sidebar | 設定並 start/stop BGP session |
 | **Total / Unicast / FlowSpec** tabs | 支援分頁與排序的路由表 |
-| **Analytics** tab | Family/AFI counts、top communities、origin AS、next-hops、prefix lengths、FlowSpec actions/protocols/ports |
 | **Live Log** tab | SSE event stream — 可用 SESSION / ANNOUNCE / WITHDRAW / ERROR / PCAP 進行過濾；點擊可展開檢視 JSON |
 | **◉ Capture** | 開始/停止 BGP 流量的 `tcpdump` (環境變數 `$PATH` 必須要有 `tcpdump`) |
 | **⬇ Export** | 將目前的路由表下載為 JSON |
@@ -108,12 +114,42 @@ docker run --rm -p 179:179 -p 8080:8080 bgpx
 
 ---
 
-## HTTP API 與 Monitoring
+## WebUI 存取
 
-除了 Web UI 外，`bgpx` 也提供以下 HTTP endpoints：
+請開啟 `http://localhost:8080/` 使用應用程式。所有 API（包含 `/routes`、
+`/events`、session/capture 控制與 `/health`）都需要來自相同 host、port 的
+WebUI 首頁 `Referer`。直接輸入 API 網址或使用一般 `curl` 會回傳 HTTP 403；
+WebUI 的搜尋、JSON 下載與即時事件串流仍可使用。
 
-- `GET /health` — 當 BGP session 狀態為 `ESTABLISHED` 時回傳 `200 OK`，否則回傳 `503 Service Unavailable`。非常適合 Load Balancer 或 Kubernetes 的 readiness probe。
-- `GET /routes/search?ip=<ip>` — 針對 Unicast RIB 進行 LPM 查詢。
+此限制適用於可信任的私人 LAN，不需要登入，也不是身分驗證：用戶端可以偽造
+headers。瀏覽器或 proxy 若移除 `Referer`，WebUI 的 API 呼叫也會被拒絕；
+proxy 必須保留 `Host` 與 `Referer`。靜態資源與翻譯仍可直接存取。
+若請求包含 `Sec-Fetch-Site`，其值必須為 `same-origin`；未傳送此 header 的
+一般 HTTP LAN 瀏覽器仍受支援。`/health` 不再提供公開的 readiness probe。
+後端仍會計算內部回應所使用的彙總統計；移除 Analytics 分頁不會移除這些計算。
+
+### 反向代理（Nginx / Caddy）
+
+[INSTALL.md](INSTALL.md#reverse-proxy-examples) 提供可複製的 Nginx 與 Caddy
+設定範例。`deploy.sh` 也會在安裝結束時，依您選擇的 WebUI port 印出範例。
+請在重新載入 proxy 設定前檢查：
+
+- WebUI 必須部署於 `/`，不支援 `/bgpx/` 等子路徑。
+- 保留瀏覽器原始的 `Host`（含 port）及 `Referer`；不要偽造 Referer 或 Sec-Fetch-Site。
+- Nginx 使用 `proxy_set_header Host $http_host;` 與
+  `proxy_set_header Referer $http_referer;`，關閉 response buffering 與 cache，
+  並允許長時間的 SSE 連線。
+- Caddy 使用 HTTP upstream 時，預設保留上述 headers，且 SSE 回應會立即傳送，
+  不需額外設定 flush interval。
+
+範例使用私人 LAN 的 `http://bgpx.lan/`；請先設定 DNS 或 hosts。
+也可以由 proxy 終止 HTTPS，但仍須保留原始 headers。若 proxy 與 bgpx 不在
+同一主機，請將 upstream 的 `127.0.0.1` 改成 bgpx 主機 IP。
+
+Nginx 可用 `sudo nginx -t` 檢查；Caddy 可用
+`sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` 檢查。
+畫面有載入但資料或控制回傳 HTTP 403 時，請檢查 Host/Referer；即時事件延遲時，
+請檢查 buffering 與 timeout。安裝程式只印出範例，不會安裝、修改或重新載入 proxy。
 
 ---
 
@@ -132,8 +168,7 @@ docker run --rm -p 179:179 -p 8080:8080 bgpx
       "prefix": "192.0.2.0/24",
       "next_hop": "10.0.0.2",
       "as_path": [65000, 64496],
-      "communities": ["65000:100", "NO_EXPORT"],
-      "path_attributes": []
+      "communities": ["65000:100", "NO_EXPORT"]
     },
     {
       "id": "a3f1b2c4d5e6",
@@ -146,12 +181,14 @@ docker run --rm -p 179:179 -p 8080:8080 bgpx
         "ip-proto": ["=tcp(6)"],
         "dst-port": ["=80", "=443"]
       },
-      "actions": ["discard"],
-      "path_attributes": []
+      "actions": ["discard"]
     }
   ]
 }
 ```
+
+儲存的路由與匯出檔案包含解碼後的欄位。原始 `path_attributes` 只會附在
+即時或重播的 announce/withdraw events，不會存放於每筆路由。
 
 `traffic-rate-bytes` 會根據 RFC 8955 解碼為 bytes/second，在 Web UI 上顯示時會自動轉換為 bps — 例如路由器發送的 `0.1 Mbps` 會顯示為 `rate-limit=100000bps`。
 
@@ -169,7 +206,7 @@ docker run --rm -p 179:179 -p 8080:8080 bgpx
 | RFC 4760 | MP-BGP | 🟡 Partial | Capability 1, 針對 AFI 1/2 與 SAFI 1/133 的 `MP_REACH_NLRI` / `MP_UNREACH_NLRI`。**未實作**：其他 SAFI (例如 SAFI 128 L3VPN, SAFI 4 MPLS, SAFI 2 Multicast, SAFI 134 FlowSpec VPN)。 |
 | RFC 5492 | Capabilities Advertisement | ✅ Full | OPEN 訊息中 Optional Parameter Type 2。 |
 | RFC 5701 | IPv6 Specific Ext. Communities | ✅ Full | Type 25 extended communities (例如 IPv6 FlowSpec redirect actions)。 |
-| RFC 6793 | 4-Byte ASN | ✅ Full | Capability 65, `AS_TRANS`, 4-octet `AS_PATH`, `AS4_PATH` 合併, `AS4_AGGREGATOR`。 |
+| RFC 6793 | 4-Byte ASN | 🟡 Partial | Capability 65, `AS_TRANS`, 4-octet `AS_PATH`, `AS4_PATH` 合併, `AS4_AGGREGATOR`。AS4_PATH 合併的邊界情況尚未完全符合規範。 |
 | RFC 7606 | Revised UPDATE Error Handling | 🟡 Partial | 在不 drop session 的情況下 discard 錯誤屬性 / 保留 malformed attributes 的 raw hex。**未實作**：完整的 treat-as-withdraw state machine。 |
 | RFC 8092 | BGP Large Communities | ✅ Full | 12-octet large communities (`admin:data1:data2`)。 |
 | RFC 8955 | IPv4 FlowSpec | 🟡 Partial | 所有 component types (1–12) 與 actions (rate-limit bps/pps, discard, redirect to VRF/IP, DSCP mark, sample/terminal)。**未實作**：嚴格的 component 遞增排序檢查 (Section 5.1)、跟 unicast RIB 驗證的 FlowSpec route validation (Section 6)、Web UI 中 operator 優先順序分組（已保留 AND/OR 標記）。 |
@@ -199,11 +236,14 @@ docker run --rm -p 179:179 -p 8080:8080 bgpx
 src/
 ├── main.rs         CLI、HTTP listener、shutdown 與 persistence worker
 ├── session.rs      Tokio BGP 連線、FSM、timers 及 UPDATE dispatch
-├── app.rs          RIB、analytics、HTTP routes 與 SSE history
+├── app.rs          RIB、彙總統計、WebUI 請求檢查、HTTP routes 與 SSE history
 ├── capture.rs      tcpdump lifecycle 與 packet events
 ├── wire.rs         原生 BGP parsing 與 message 構建
 └── wire_helpers.rs 既有的 Rust FlowSpec 解碼 helper
-web/ui.html         內建的單一檔案 Vanilla JS Web UI
+web/ui.html         內建的 WebUI HTML
+web/js/             共用狀態、路由表、log 及 session/capture 控制
+web/css/style.css   WebUI 樣式
+web/locales/        英文、繁體中文及韓文翻譯
 ```
 
 ---
@@ -215,7 +255,7 @@ cargo build --locked --release
 cargo test --locked
 ./test.sh               # fmt, Clippy, 原生 test, shell/JS 語法檢查
 # cargo test 包含 324 個 parser compatibility fixtures
-# Python 3 為選用，僅用於獨立的 HTTP/SSE smoke test。
+# Python 3 為選用，用於 HTTP/SSE 與安裝 smoke tests。
 ```
 
 ---

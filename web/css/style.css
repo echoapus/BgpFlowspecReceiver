@@ -673,66 +673,6 @@ body {
 .btn-theme:hover {
   background: var(--bg3);
 }
-.analytics-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  padding: 16px;
-  overflow: auto;
-}
-.analytics-card {
-  background: var(--bg1);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
-}
-.analytics-card h3 {
-  color: var(--text2);
-  font-size: 11px;
-  margin-bottom: 10px;
-  text-transform: uppercase;
-}
-.analytics-value {
-  color: var(--accent);
-  font-size: 28px;
-  font-weight: 700;
-}
-.analytics-list {
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.8;
-  word-break: break-word;
-}
-.analytics-bar {
-  display: grid;
-  grid-template-columns: minmax(70px, auto) 1fr auto;
-  gap: 8px;
-  align-items: center;
-  margin: 7px 0;
-}
-.analytics-bar-track {
-  height: 7px;
-  overflow: hidden;
-  border-radius: 4px;
-  background: var(--bg3);
-}
-.analytics-bar-fill {
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent);
-}
-.analytics-bar-count { color: var(--text3); }
-.analytics-bar.clickable {
-  cursor: pointer;
-  padding: 2px 4px;
-  margin: 5px -4px;
-  border-radius: 4px;
-  transition: background .15s;
-}
-.analytics-bar.clickable:hover {
-  background: var(--bg2);
-}
-
 /* ── Route filter bar & clickable badges ── */
 .route-filter-bar {
   display: flex;

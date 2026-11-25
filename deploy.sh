@@ -293,5 +293,41 @@ EOF
 fi
 echo "Installed: ${INSTALL_DIR}/bin/bgpx"
 echo "Web UI: http://localhost:${WEB_PORT}"
+cat <<'EOF'
+If using a reverse proxy, check its configuration before opening the WebUI:
+  - Serve bgpx at /, not a subpath such as /bgpx/.
+  - Preserve the browser's Host (including port) and Referer headers.
+  - Disable response buffering and allow long-lived SSE connections.
+Rewriting Host or stripping Referer causes API requests to return HTTP 403.
+EOF
+cat <<EOF
+
+Example: Nginx (inside the http block; point bgpx.lan to this proxy):
+server {
+    listen 80;
+    server_name bgpx.lan;
+    location / {
+        proxy_pass http://127.0.0.1:${WEB_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header Referer \$http_referer;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+    }
+}
+Validate before reloading: nginx -t
+
+Example: Caddyfile (plain HTTP for a private LAN):
+http://bgpx.lan {
+    # Host (including port) and Referer are preserved; SSE flushes immediately.
+    reverse_proxy 127.0.0.1:${WEB_PORT}
+}
+Validate before reloading: caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+Use http://bgpx.lan/ with either example. These assume the proxy and bgpx
+run on the same host; replace 127.0.0.1 with the bgpx host IP otherwise.
+Do not synthesize Referer or Sec-Fetch-Site headers to bypass the WebUI check.
+EOF
 echo "Manual start: ${INSTALL_DIR}/bin/bgpx --port ${WEB_PORT}"
 printf 'Uninstall: %q --install-dir %q\n' "${INSTALL_DIR}/uninstall.sh" "${INSTALL_DIR}"

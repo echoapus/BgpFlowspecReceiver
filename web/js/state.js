@@ -9,10 +9,8 @@ const AppState = {
   peerAs: '',
   peerInfo: {},
 
-  // RIB statistics & event counters
-  ribStats: { total: 0, unicast: 0, flowspec: 0, ipv4: 0, ipv6: 0, analytics: {} },
-  announceCount: 0,
-  withdrawCount: 0,
+  // RIB statistics
+  ribStats: { total: 0, unicast: 0, flowspec: 0, ipv4: 0, ipv6: 0 },
 
   // Routes table & pagination state
   routeRows: [],
@@ -65,7 +63,7 @@ const AppState = {
     this.update({
       routeRows: [],
       routeTotal: 0,
-      ribStats: { total: 0, unicast: 0, flowspec: 0, ipv4: 0, ipv6: 0, analytics: {} },
+      ribStats: { total: 0, unicast: 0, flowspec: 0, ipv4: 0, ipv6: 0 },
       currentPage: 1,
       routeFilter: '',
       flashRouteId: null,
@@ -131,3 +129,23 @@ function copyText(btn, text) {
     setTimeout(() => { btn.textContent = t('log.copy'); }, 1500);
   });
 }
+
+// Keep sidebar and route tab counts in sync.
+function updateRibStats() {
+  const stats = AppState.ribStats || {};
+  setStat('s-total', stats.total || 0);
+  setStat('s-unicast', stats.unicast || 0);
+  setStat('s-flowspec', stats.flowspec || 0);
+  setText('total-count', stats.total || 0);
+  setText('unicast-count', stats.unicast || 0);
+  setText('flowspec-count', stats.flowspec || 0);
+}
+
+function setStat(id, val) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = val;
+  el.className = 'stat-val' + (val > 0 ? ' nonzero' : '');
+}
+
+AppState.on('rib', updateRibStats);

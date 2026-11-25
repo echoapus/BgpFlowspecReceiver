@@ -1,6 +1,7 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, Request, State},
     http::StatusCode,
+    middleware::{self, Next},
     response::{
         sse::{Event, KeepAlive, Sse},
         Html, IntoResponse, Response,
@@ -1192,7 +1193,6 @@ async fn get_locale(Path(code): Path<String>) -> Result<Json<Value>, ApiError> {
 async fn get_js(Path(file): Path<String>) -> Response {
     let content = match file.as_str() {
         "state.js" => Some(include_str!("../web/js/state.js")),
-        "analytics.js" => Some(include_str!("../web/js/analytics.js")),
         "routes.js" => Some(include_str!("../web/js/routes.js")),
         "log.js" => Some(include_str!("../web/js/log.js")),
         "api.js" => Some(include_str!("../web/js/api.js")),
@@ -1213,9 +1213,52 @@ async fn get_js(Path(file): Path<String>) -> Response {
     }
 }
 
+// shortcut: referrer checks deter casual direct access; headers are spoofable, use authentication on untrusted networks.
+async fn webui_only(request: Request, next: Next) -> Response {
+    let headers = request.headers();
+    let allowed = headers
+        .get("referer")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<axum::http::Uri>().ok())
+        .is_some_and(|uri| {
+            matches!(uri.scheme_str(), Some("http" | "https"))
+                && uri.path() == "/"
+                && uri.authority().is_some_and(|authority| {
+                    headers
+                        .get("host")
+                        .and_then(|v| v.to_str().ok())
+                        .is_some_and(|host| authority.as_str().eq_ignore_ascii_case(host))
+                })
+        })
+        && headers
+            .get("sec-fetch-site")
+            .is_none_or(|site| site == "same-origin");
+    let mut response = if allowed {
+        next.run(request).await
+    } else {
+        (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error":"Use the WebUI to access this endpoint"})),
+        )
+            .into_response()
+    };
+    response
+        .headers_mut()
+        .insert("cache-control", "no-store".parse().unwrap());
+    response
+}
+
 pub fn router(app: Shared) -> Router {
-    Router::new()
-        .route("/", get(|| async { Html(include_str!("../web/ui.html")) }))
+    let web = Router::new()
+        .route(
+            "/",
+            get(|| async {
+                (
+                    [("referrer-policy", "same-origin")],
+                    Html(include_str!("../web/ui.html")),
+                )
+            }),
+        )
         .route(
             "/css/style.css",
             get(|| async {
@@ -1236,7 +1279,8 @@ pub fn router(app: Shared) -> Router {
         )
         .route("/js/{file}", get(get_js))
         .route("/locales", get(list_locales))
-        .route("/locales/{code}", get(get_locale))
+        .route("/locales/{code}", get(get_locale));
+    Router::new()
         .route("/session/start", post(start))
         .route("/session/stop", post(stop))
         .route("/routes", get(routes))
@@ -1253,6 +1297,8 @@ pub fn router(app: Shared) -> Router {
         )
         .route("/capture/start", post(crate::capture::start))
         .route("/capture/stop", post(crate::capture::stop))
+        .route_layer(middleware::from_fn(webui_only))
+        .merge(web)
         .with_state(app)
 }
 

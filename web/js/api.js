@@ -47,8 +47,6 @@ function handleSnapshot(event) {
 
   AppState.update({
     currentPage: 1,
-    announceCount: 0,
-    withdrawCount: 0,
     ribStats: event.stats || AppState.ribStats,
     sessionRunning: running,
     capturing: Boolean(s.capture_running),
@@ -56,7 +54,7 @@ function handleSnapshot(event) {
     peerIp: s.peer_ip || '',
     peerAs: s.peer_as || '',
     peerInfo: s.peer_info || {},
-  }, ['session', 'capture', 'rib', 'counters']);
+  }, ['session', 'capture', 'rib']);
 
   if (running) {
     populateForm(s);

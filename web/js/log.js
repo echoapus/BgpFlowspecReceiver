@@ -51,12 +51,6 @@ function appendLogEntry(event) {
   const empty = $('log-empty');
   if (empty) empty.style.display = 'none';
 
-  if (event.type === 'announce') {
-    AppState.update({ announceCount: AppState.announceCount + (event.count || 0) }, ['counters']);
-  } else if (event.type === 'withdraw') {
-    AppState.update({ withdrawCount: AppState.withdrawCount + (event.count || 0) }, ['counters']);
-  }
-
   if (AppState.logPaused && !event.replayed) return;
   if ((event.type === 'announce' || event.type === 'withdraw')
       && !$('tab-log').classList.contains('active')) return;
@@ -156,11 +150,7 @@ async function clearLog() {
       }),
     );
   }
-  AppState.update({
-    logCount: 0,
-    announceCount: 0,
-    withdrawCount: 0,
-  }, ['counters']);
+  AppState.logCount = 0;
   setText('log-count', 0);
 }
 

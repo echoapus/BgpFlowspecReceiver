@@ -135,9 +135,6 @@
       <button class="tab-btn" id="tab-flowspec-btn" onclick="switchTab('flowspec')">
         <span data-i18n="tab.flowspec">FlowSpec</span> <span class="tab-count" id="flowspec-count">0</span>
       </button>
-      <button class="tab-btn" id="tab-analytics-btn" onclick="switchTab('analytics')">
-        <span data-i18n="tab.analytics">Analytics</span>
-      </button>
       <button class="tab-btn" id="tab-log-btn" onclick="switchTab('log')">
         <span data-i18n="tab.live_log">Live Log</span> <span class="tab-count" id="log-count">0</span>
       </button>
@@ -177,24 +174,6 @@
       </div>
     </div>
 
-    <!-- Analytics tab -->
-    <div class="tab-content" id="tab-analytics">
-      <div class="analytics-grid">
-        <div class="analytics-card"><h3 data-i18n="analytics.total_routes">Total routes</h3><div class="analytics-value" id="a-total">0</div></div>
-        <div class="analytics-card"><h3 data-i18n="analytics.unicast">Unicast</h3><div class="analytics-value" id="a-unicast">0</div></div>
-        <div class="analytics-card"><h3 data-i18n="analytics.flowspec">FlowSpec</h3><div class="analytics-value" id="a-flowspec">0</div></div>
-        <div class="analytics-card"><h3 data-i18n="analytics.ipv4_ipv6">IPv4 / IPv6</h3><div class="analytics-list" id="a-afi">IPv4 0<br>IPv6 0</div></div>
-        <div class="analytics-card"><h3 data-i18n="analytics.updates">Updates</h3><div class="analytics-list" id="a-events">Announce 0<br>Withdraw 0</div></div>
-        <div class="analytics-card"><h3 data-i18n="analytics.top_communities">Top communities</h3><div class="analytics-list" id="a-communities">—</div></div>
-        <div class="analytics-card"><h3 data-i18n="analytics.origin_as">Origin AS</h3><div class="analytics-list" id="a-origin-as">—</div></div>
-        <div class="analytics-card"><h3 data-i18n="analytics.top_next_hops">Top next hops</h3><div class="analytics-list" id="a-next-hops">—</div></div>
-        <div class="analytics-card"><h3 data-i18n="analytics.prefix_lengths">Prefix lengths</h3><div class="analytics-list" id="a-prefix-lengths">—</div></div>
-        <div class="analytics-card"><h3 data-i18n="analytics.flowspec_actions">FlowSpec actions</h3><div class="analytics-list" id="a-actions">—</div></div>
-        <div class="analytics-card"><h3 data-i18n="analytics.flowspec_protocols">FlowSpec protocols</h3><div class="analytics-list" id="a-protocols">—</div></div>
-        <div class="analytics-card"><h3 data-i18n="analytics.flowspec_ports">FlowSpec ports</h3><div class="analytics-list" id="a-ports">—</div></div>
-      </div>
-    </div>
-
     <!-- Log tab -->
     <div class="tab-content" id="tab-log">
       <div class="filter-bar">
@@ -225,7 +204,6 @@
 
 <script src="/i18n.js"></script>
 <script src="/js/state.js"></script>
-<script src="/js/analytics.js"></script>
 <script src="/js/routes.js"></script>
 <script src="/js/log.js"></script>
 <script src="/js/api.js"></script>

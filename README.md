@@ -1,5 +1,7 @@
 # bgpx
 
+[繁體中文](README-zhtw.md) · [Installation guide](INSTALL.md)
+
 BGP Unicast and FlowSpec receiver with a live web UI — native Rust edition, version 26.11.18.
 Connects to a peer router, maintains an in-memory RIB, and streams everything to the browser via Server-Sent Events.
 
@@ -28,11 +30,14 @@ has been removed. Its parser outputs are preserved as Rust regression fixtures.
 - **4-byte ASN** — `AS_TRANS`, `CAP_4BYTE_ASN`, `AS4_PATH` (RFC 6793)
 - **Hold-timer enforcement** — session resets on expiry
 - **JSON RIB persistence** — periodic atomic writes to a file (`--json-output`)
-- **Web UI** — sortable route table, live log with filter chips, analytics, packet capture viewer, `show ip bgp <ip>` longest-prefix-match search
+- **Web UI** — sortable route table, live log with filter chips, packet capture viewer, `show ip bgp <ip>` longest-prefix-match search
 
 ---
 
 ## Quick start
+
+Use the WebUI on a trusted private LAN; no login is required. Direct API
+requests without the WebUI request headers return HTTP 403.
 
 ```bash
 # Web UI only — configure the session in the browser
@@ -87,13 +92,14 @@ docker run --rm -p 179:179 -p 8080:8080 bgpx
 
 ## Web UI
 
-Open `http://localhost:8080`. Session config is saved to `localStorage`.
+Open `http://localhost:8080/`. Session config is saved to `localStorage`.
+The available tabs are Total, Unicast, FlowSpec and Live Log. The Analytics tab
+has been removed; route counts remain in the sidebar and route tabs.
 
 | Panel | What it shows |
 |---|---|
 | Sidebar | Configure and start/stop the BGP session |
 | **Total / Unicast / FlowSpec** tabs | Paginated, sortable route table |
-| **Analytics** tab | Family/AFI counts, top communities, origin AS, next-hops, prefix lengths, FlowSpec actions/protocols/ports |
 | **Live Log** tab | SSE event stream — filter by SESSION / ANNOUNCE / WITHDRAW / ERROR / PCAP; click to expand JSON |
 | **◉ Capture** | Start/stop `tcpdump` on BGP traffic (requires `tcpdump` on `$PATH`) |
 | **⬇ Export** | Download the current table view as JSON |
@@ -122,12 +128,34 @@ Header indicators:
 
 ---
 
-## HTTP API & Monitoring
+## WebUI access
 
-In addition to the Web UI, `bgpx` exposes HTTP endpoints:
+Open `http://localhost:8080/` to use the application. API endpoints, including
+`/routes`, `/events`, session/capture controls and `/health`, require a `Referer`
+from the WebUI root on the same host and port. Direct URLs and plain `curl`
+requests return HTTP 403. The UI's search, JSON download and live stream still work.
 
-- `GET /health` — Returns `200 OK` when the BGP session is `ESTABLISHED`, and `503 Service Unavailable` otherwise. Ideal for load balancer or Kubernetes readiness probes.
-- `GET /routes/search?ip=<ip>` — Performs a longest-prefix-match lookup against the unicast RIB.
+This is a convenience restriction for a trusted private LAN, not authentication:
+a client can spoof the headers. No login is required. Browsers or proxies that
+strip `Referer` will block UI API calls; proxies must preserve `Host` and `Referer`.
+Static assets and translations remain publicly accessible. When present,
+`Sec-Fetch-Site` must be `same-origin`; plain HTTP LAN browsers that omit this
+header are supported. `/health` is no longer a public readiness endpoint.
+The backend still computes aggregate statistics for its internal responses;
+removing the Analytics tab does not remove that computation.
+
+### Reverse proxies
+
+Nginx and Caddy examples are in [INSTALL.md](INSTALL.md#reverse-proxy-examples).
+`deploy.sh` also prints them with your chosen WebUI port. Serve the app at `/`,
+preserve the original Host (including port) and Referer, and keep SSE streaming
+without buffering. Do not fabricate Referer or Sec-Fetch-Site headers.
+
+The examples use `http://bgpx.lan/` for a private LAN. HTTPS termination at the
+proxy also works when headers are preserved. If the proxy is on another host,
+replace its `127.0.0.1` upstream with the bgpx host IP. Check the proxy
+configuration before reloading it; a rewritten Host or stripped Referer causes
+HTTP 403, while response buffering can delay live events.
 
 ---
 
@@ -146,8 +174,7 @@ In addition to the Web UI, `bgpx` exposes HTTP endpoints:
       "prefix": "192.0.2.0/24",
       "next_hop": "10.0.0.2",
       "as_path": [65000, 64496],
-      "communities": ["65000:100", "NO_EXPORT"],
-      "path_attributes": []
+      "communities": ["65000:100", "NO_EXPORT"]
     },
     {
       "id": "a3f1b2c4d5e6",
@@ -160,12 +187,14 @@ In addition to the Web UI, `bgpx` exposes HTTP endpoints:
         "ip-proto": ["=tcp(6)"],
         "dst-port": ["=80", "=443"]
       },
-      "actions": ["discard"],
-      "path_attributes": []
+      "actions": ["discard"]
     }
   ]
 }
 ```
+
+Stored routes and exports contain decoded fields. Raw `path_attributes` are
+available on live/replayed announce and withdraw events, not on stored rows.
 
 `traffic-rate-bytes` is decoded per RFC 8955 as bytes/second and rendered as network bits/second — e.g. `0.1 Mbps` from the router appears as `rate-limit=100000bps`.
 
@@ -183,7 +212,7 @@ In addition to the Web UI, `bgpx` exposes HTTP endpoints:
 | RFC 4760 | MP-BGP | 🟡 Partial | Capability 1, `MP_REACH_NLRI` / `MP_UNREACH_NLRI` for AFI 1/2 and SAFI 1/133. **Unimplemented**: Other SAFIs (e.g. SAFI 128 L3VPN, SAFI 4 MPLS, SAFI 2 Multicast, SAFI 134 FlowSpec VPN). |
 | RFC 5492 | Capabilities Advertisement | ✅ Full | Optional Parameter Type 2 in OPEN message. |
 | RFC 5701 | IPv6 Specific Ext. Communities | ✅ Full | Type 25 extended communities (e.g. IPv6 FlowSpec redirect actions). |
-| RFC 6793 | 4-Byte ASN | ✅ Full | Capability 65, `AS_TRANS`, 4-octet `AS_PATH`, `AS4_PATH` merging, `AS4_AGGREGATOR`. |
+| RFC 6793 | 4-Byte ASN | 🟡 Partial | Capability 65, `AS_TRANS`, 4-octet `AS_PATH`, `AS4_PATH` merging, `AS4_AGGREGATOR`. AS4_PATH merge edge cases are not fully compliant. |
 | RFC 7606 | Revised UPDATE Error Handling | 🟡 Partial | Attribute discard / preservation of raw hex on malformed attributes without session drop. **Unimplemented**: Full formal treat-as-withdraw state machine. |
 | RFC 8092 | BGP Large Communities | ✅ Full | 12-octet large communities (`admin:data1:data2`). |
 | RFC 8955 | IPv4 FlowSpec | 🟡 Partial | All component types (1–12) and actions (rate-limit bps/pps, discard, redirect to VRF/IP, DSCP mark, sample/terminal). **Unimplemented**: Strict ascending component ordering check (Section 5.1), FlowSpec route validation against unicast RIB (Section 6), operator precedence grouping in UI (AND/OR markers are preserved). |
@@ -213,11 +242,14 @@ In addition to the Web UI, `bgpx` exposes HTTP endpoints:
 src/
 ├── main.rs         CLI, HTTP listener, shutdown and persistence worker
 ├── session.rs      Tokio BGP connections, FSM, timers and UPDATE dispatch
-├── app.rs          RIB, analytics, HTTP routes and SSE history
+├── app.rs          RIB, aggregate statistics, WebUI request checks, HTTP routes and SSE history
 ├── capture.rs      tcpdump lifecycle and packet events
 ├── wire.rs         native BGP parsing and message building
 └── wire_helpers.rs existing Rust FlowSpec decoding helpers
-web/ui.html         embedded single-file vanilla JS web UI
+web/ui.html         embedded WebUI markup
+web/js/             shared state, route table, log and session/capture controls
+web/css/style.css   WebUI styles
+web/locales/        English, Traditional Chinese and Korean translations
 ```
 
 ---
@@ -229,7 +261,7 @@ cargo build --locked --release
 cargo test --locked
 ./test.sh               # fmt, Clippy, native tests, shell/JS checks
 # cargo test includes 324 parser compatibility fixtures.
-# Python 3 is optional for the standalone HTTP/SSE smoke test.
+# Python 3 is optional for HTTP/SSE and installation smoke tests.
 ```
 
 ---
@@ -243,7 +275,9 @@ hosts, or an OpenRC service on Alpine, using the included script:
 sudo ./deploy.sh --service --cap-net-bind-service
 ```
 
-For full host deployment instructions, custom paths, or to cleanly remove the application via `uninstall.sh`, see [INSTALL.md](INSTALL.md).
+For host deployment, reverse-proxy examples, custom paths and removal via
+`uninstall.sh`, see [INSTALL.md](INSTALL.md). Deployment prints proxy settings
+to check; it does not install, configure or reload Nginx or Caddy.
 
 **Upgrading from Python:** The legacy Python backend and PyO3 dependency have been completely removed. If you are upgrading an older deployment, simply re-run `./deploy.sh --service` to replace it with the native Rust binary. Existing configurations will be preserved.
 

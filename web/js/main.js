@@ -76,7 +76,6 @@ function switchTab(name) {
   } else {
     AppState.update({ activeTab: name });
     $('tab-' + name).classList.add('active');
-    if (name === 'analytics') renderAnalytics();
   }
   $('clear-btn').style.display = name === 'log' ? '' : 'none';
 }

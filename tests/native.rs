@@ -52,7 +52,14 @@ fn update(attrs: &[u8], nlri: &[u8]) -> Vec<u8> {
 }
 async fn request(app: axum::Router, path: &str) -> (StatusCode, Value) {
     let response = app
-        .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri(path)
+                .header("host", "bgpx.lan:8080")
+                .header("referer", "http://bgpx.lan:8080/")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     let status = response.status();
@@ -81,6 +88,81 @@ fn parser_roundtrip_and_malformed_input() {
     assert_eq!(parsed["path_attributes"][2]["raw"], "0102");
     assert!(wire::update(&body[..body.len() - 1], 2).is_err());
     assert!(wire::update(&body, 3).is_err());
+}
+
+#[tokio::test]
+async fn api_requires_a_webui_referrer() {
+    let api = router(App::new(None));
+    for (method, path) in [
+        ("GET", "/routes"),
+        ("GET", "/routes/export"),
+        ("GET", "/routes/search?ip=192.0.2.1"),
+        ("GET", "/events"),
+        ("GET", "/health"),
+        ("POST", "/session/start"),
+        ("POST", "/session/stop"),
+        ("POST", "/capture/start"),
+        ("POST", "/capture/stop"),
+        ("DELETE", "/log"),
+    ] {
+        let response = api
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("host", "bgpx.lan:8080")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {path}");
+        assert_eq!(response.headers()["cache-control"], "no-store");
+    }
+    for (referer, site, expected) in [
+        ("http://bgpx.lan:8080/", None, StatusCode::OK),
+        ("http://bgpx.lan:8080/", Some("same-origin"), StatusCode::OK),
+        (
+            "http://bgpx.lan:8080/",
+            Some("cross-site"),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "http://bgpx.lan:8080/",
+            Some("same-site"),
+            StatusCode::FORBIDDEN,
+        ),
+        ("http://evil.lan/", None, StatusCode::FORBIDDEN),
+        ("http://bgpx.lan:8081/", None, StatusCode::FORBIDDEN),
+        (
+            "http://bgpx.lan:8080.evil.lan/",
+            None,
+            StatusCode::FORBIDDEN,
+        ),
+        ("http://bgpx.lan:8080/routes", None, StatusCode::FORBIDDEN),
+        ("invalid", None, StatusCode::FORBIDDEN),
+    ] {
+        let mut request = Request::builder()
+            .uri("/routes")
+            .header("host", "bgpx.lan:8080")
+            .header("referer", referer);
+        if let Some(site) = site {
+            request = request.header("sec-fetch-site", site);
+        }
+        let response = api
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "{referer} {site:?}");
+    }
+    let response = api
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["referrer-policy"], "same-origin");
 }
 
 #[test]
@@ -327,6 +409,8 @@ async fn sse_snapshot_replay_and_shutdown() {
         .oneshot(
             Request::builder()
                 .uri("/events")
+                .header("host", "bgpx.lan:8080")
+                .header("referer", "http://bgpx.lan:8080/")
                 .body(Body::empty())
                 .unwrap(),
         )
